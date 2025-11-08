@@ -1007,7 +1007,7 @@ if st.session_state.workflow_step == 1:
 
     st.markdown("<br>", unsafe_allow_html=True)
     
-    if st.button("🚀 INITIATE NEURAL ANALYSIS", use_column_width=True, type="primary"):
+    if st.button("🚀 INITIATE NEURAL ANALYSIS", use_container_width=True, type="primary"):
         if 'l_img' in st.session_state and 'r_img' in st.session_state:
             if model is None:
                 st.error("❌ Model not loaded. Cannot perform analysis.")
@@ -1085,12 +1085,12 @@ elif st.session_state.workflow_step == 2:
         # Navigation buttons
         col1, col2, col3 = st.columns([1, 2, 1])
         with col1:
-            if st.button("⬅️ BACK", use_column_width=True):
+            if st.button("⬅️ BACK", use_container_width=True):
                 st.session_state.workflow_step = 1
                 st.rerun()
         
         with col3:
-            if st.button("GENERATE REPORT ➡️", use_column_width=True, type="primary"):
+            if st.button("GENERATE REPORT ➡️", use_container_width=True, type="primary"):
                 # Generate report here if Gemini is configured
                 if st.session_state.get('gemini_api_key'):
                     with st.spinner("🤖 Generating comprehensive clinical report with Google Gemini... This may take 30-60 seconds."):
@@ -1295,16 +1295,16 @@ Powered by: ResNet50 CNN + Google Gemini Vision AI
                 "💾 DOWNLOAD FULL REPORT", 
                 full_report, 
                 file_name=f"OCULUS_Report_{st.session_state.patient['name'].replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                use_column_width=True,
+                use_container_width=True,
                 type="primary"
             )
         
         with col2:
-            if st.button("📧 EMAIL REPORT", use_column_width=True):
+            if st.button("📧 EMAIL REPORT", use_container_width=True):
                 st.info("📧 Email functionality coming soon...")
         
         with col3:
-            if st.button("🖨 PRINT REPORT", use_column_width=True):
+            if st.button("🖨 PRINT REPORT", use_container_width=True):
                 st.success("📄 Report sent to virtual printer!")
         
         st.markdown("<br>", unsafe_allow_html=True)
@@ -1314,12 +1314,12 @@ Powered by: ResNet50 CNN + Google Gemini Vision AI
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            if st.button("⬅️ BACK TO DIAGNOSIS", use_column_width=True):
+            if st.button("⬅️ BACK TO DIAGNOSIS", use_container_width=True):
                 st.session_state.workflow_step = 2
                 st.rerun()
         
         with col2:
-            if st.button("🔄 NEW ANALYSIS", use_column_width=True):
+            if st.button("🔄 NEW ANALYSIS", use_container_width=True):
                 # Reset for new analysis
                 for key in list(st.session_state.keys()):
                     if key not in ['app_loaded', 'loading_metrics', 'gemini_api_key']:
@@ -1328,12 +1328,12 @@ Powered by: ResNet50 CNN + Google Gemini Vision AI
                 st.rerun()
         
         with col3:
-            if st.button("🏁 COMPLETE", use_column_width=True, type="primary"):
+            if st.button("🏁 COMPLETE", use_container_width=Truee, type="primary"):
                 st.balloons()
                 st.success("✅ Analysis workflow completed successfully!")
     else:
         st.error("❌ Diagnostic data not available. Please complete the analysis first.")
-        if st.button("⬅️ BACK TO ANALYSIS", use_column_width=True):
+        if st.button("⬅️ BACK TO ANALYSIS", use_container_width=True):
             st.session_state.workflow_step = 1
             st.rerun()
     
