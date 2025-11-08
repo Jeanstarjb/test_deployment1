@@ -1114,7 +1114,7 @@ elif st.session_state.workflow_step == 2:
     else:
         st.info("🔄 Processing diagnostic data...")
         st.session_state.workflow_step = 1
-        time.sleep(8)
+        time.sleep(15)
         st.rerun()
     
     st.markdown('</div>', unsafe_allow_html=True)
