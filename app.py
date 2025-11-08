@@ -403,21 +403,34 @@ st.markdown("""
         
         /* #bg-video { object-fit: contain !important; } */
         
-        /* Fix stepper alignment on mobile - NOW CENTERED */
+        /* --- New Mobile Stepper: Horizontal with labels below --- */
         .progress-stepper {
-            flex-direction: column !important;
-            gap: 10px !important;
-            align-items: center !important; /* Changed from flex-start to center */
-            padding: 20px 10px !important;  /* Added more vertical padding */
+            align-items: flex-start !important; /* Aligns circles and connectors to the top */
+            gap: 5px !important;                /* Reduces space between steps */
+            padding: 20px 5px !important;       /* Reduces side padding */
         }
         .step {
-            justify-content: center !important; /* Centers the text label with the circle */
+            flex-direction: column !important; /* Stacks circle above label */
+            align-items: center !important;    /* Centers them horizontally */
+            flex: 1 !important;                /* Makes each step take equal width */
+        }
+        .step-circle {
+            width: 40px !important;  /* Slightly smaller circles for mobile */
+            height: 40px !important;
+            font-size: 1rem !important;
+            margin-bottom: 5px !important; /* Space between circle and text */
+        }
+        .step-label {
+            font-size: 0.6rem !important;  /* Smaller text */
+            text-align: center !important;
+            white-space: normal !important; /* Allows text to wrap to two lines if needed */
+            line-height: 1.1 !important;
         }
         .step-connector {
-            width: 2px !important;
-            height: 20px !important;
-            margin-left: 0 !important;      /* Removed left margin since it's now centered */
-    }
+             width: 15px !important;      /* Shorter connectors to save space */
+             min-width: 10px !important;
+             margin-top: 20px !important; /* Pushes connector down to align with center of 40px circle */
+        }
             
     .custom-upload-wrapper [data-testid='stFileUploader'] {
         width: 100%;
