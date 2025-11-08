@@ -501,6 +501,7 @@ st.markdown("""
         color: #e2e8f0;
         font-family: 'Segoe UI', system-ui, sans-serif;
         min-height: 100vh;
+        transition: opacity 0.8s ease-in-out, filter 0.8s ease-in-out;
     }
 
     #MainMenu {visibility: hidden;}
