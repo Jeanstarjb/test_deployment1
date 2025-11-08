@@ -89,14 +89,13 @@ if not st.session_state.app_loaded:
             {"" if not BASE64_VIDEO else f'''
             #bg-video {{
                 position: fixed;
-                top: 50%; left: 50%;
-                min-width: 100%; min-height: 100%;
-                width: auto; height: auto;
-                transform: translate(-50%, -50%);
+                top: 0; left: 0;
+                width: 100vw; 
+                height: 100vh;
+                object-fit: cover;
                 z-index: 2;
                 opacity: 0;
                 filter: hue-rotate(180deg) contrast(1.05);
-                object-fit: cover;
                 transition: opacity 0.8s ease-in;
             }}
             #bg-video.loaded {{ opacity: 0.4; }}
