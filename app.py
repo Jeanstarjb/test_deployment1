@@ -278,7 +278,7 @@ if not st.session_state.app_loaded:
                 width: 0%; 
                 background: #00f2fe; 
                 box-shadow: 0 0 30px #00f2fe; 
-                animation: loadProgress 1.0s ease-out forwards; 
+                animation: loadProgress 6.0s ease-out forwards; 
             }}
             
             @keyframes loadProgress {{ 
