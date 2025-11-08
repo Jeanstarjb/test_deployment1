@@ -1337,7 +1337,7 @@ Powered by: ResNet50 CNN + Google Gemini Vision AI
             st.session_state.workflow_step = 1
             st.rerun()
     
-    st.markdown('</div>', unsafe_allow_html=True)s
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # Footer
 st.markdown("---")
