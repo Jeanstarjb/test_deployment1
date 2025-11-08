@@ -64,21 +64,41 @@ if not st.session_state.app_loaded:
                 overflow: hidden; 
                 background: #000; 
                 font-family: 'Courier New', monospace;
-                width: 100vw;
-                height: 100vh;
+                width: 100vw; height: 100vh;
             }}
             
+            /* --- DESKTOP BACKGROUND --- */
             #fallback-bg {{
-                position: fixed;
-                top: 0; left: 0;
-                width: 100%; height: 100%;
-                background: 
-                    radial-gradient(circle at 20% 80%, rgba(79, 172, 254, 0.1) 0%, transparent 50%),
-                    radial-gradient(circle at 80% 20%, rgba(255, 0, 255, 0.1) 0%, transparent 50%),
-                    radial-gradient(circle at 40% 40%, rgba(0, 242, 254, 0.05) 0%, transparent 50%),
-                    linear-gradient(135deg, #0a0a12 0%, #1a1a2e 50%, #16213e 100%);
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                background: radial-gradient(circle at 20% 80%, rgba(79, 172, 254, 0.1) 0%, transparent 50%),
+                            radial-gradient(circle at 80% 20%, rgba(255, 0, 255, 0.1) 0%, transparent 50%),
+                            linear-gradient(135deg, #0a0a12 0%, #1a1a2e 50%, #16213e 100%);
                 z-index: 1;
                 animation: gradientPulse 4s ease-in-out infinite;
+            }}
+
+            /* --- MOBILE SPECIFIC VIEW (The fix for "ridiculously big") --- */
+            @media only screen and (max-width: 768px) {{
+                /* 1. Hide the big video and particles on phone to save space/processing */
+                #bg-video, .particle {{ display: none !important; }}
+                
+                /* 2. Simpler, cleaner background for phone */
+                #fallback-bg {{
+                    background: linear-gradient(to bottom, #0a0a12, #121212) !important;
+                }}
+                /* 3. Add a cool simplified glowing orb for mobile instead of video */
+                #fallback-bg::after {{
+                    content: ''; position: absolute;
+                    top: 40%; left: 50%;
+                    width: 300px; height: 300px;
+                    background: radial-gradient(circle, rgba(0, 242, 254, 0.2) 0%, transparent 70%);
+                    transform: translate(-50%, -50%);
+                    animation: pulse 3s ease-in-out infinite;
+                }}
+                
+                /* 4. Shrink text and loading bar to fit phone screen comfortably */
+                #loading-bar-container {{ width: 70% !important; }}
+                #loading-text {{ font-size: 11px !important; letter-spacing: 3px !important; }}
             }}
             
             @keyframes gradientPulse {{
@@ -86,15 +106,13 @@ if not st.session_state.app_loaded:
                 50% {{ opacity: 0.9; filter: hue-rotate(180deg) brightness(1.05); }}
             }}
             
+            @keyframes pulse {{ 0%, 100% {{ opacity: 0.5; transform: translate(-50%, -50%) scale(1); }} 50% {{ opacity: 1; transform: translate(-50%, -50%) scale(1.2); }} }}
+
+            /* --- VIDEO BACKGROUND --- */
             {"" if not BASE64_VIDEO else f'''
             #bg-video {{
-                position: fixed;
-                top: 0; left: 0;
-                width: 100vw; 
-                height: 100vh;
-                object-fit: cover;
-                z-index: 2;
-                opacity: 0;
+                position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+                object-fit: cover; z-index: 2; opacity: 0;
                 filter: hue-rotate(180deg) contrast(1.05);
                 transition: opacity 0.8s ease-in;
             }}
@@ -102,21 +120,14 @@ if not st.session_state.app_loaded:
             '''}
             
             #loading-content {{
-                position: fixed;
-                top: 0; left: 0;
-                width: 100%; height: 100%;
-                display: flex;
-                flex-direction: column;
-                justify-content: center;
-                align-items: center;
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                display: flex; flex-direction: column; justify-content: center; align-items: center;
                 z-index: 10;
             }}
             
             .particle {{
-                position: absolute;
-                width: 2px; height: 2px;
-                background: #00f2fe;
-                border-radius: 50%;
+                position: absolute; width: 2px; height: 2px;
+                background: #00f2fe; border-radius: 50%;
                 box-shadow: 0 0 8px #00f2fe;
                 animation: float-up linear infinite;
             }}
@@ -124,145 +135,87 @@ if not st.session_state.app_loaded:
             @keyframes float-up {{
                 0% {{ transform: translateY(0) scale(0); opacity: 0; }}
                 20% {{ opacity: 1; }}
-                80% {{ opacity: 1; }}
                 100% {{ transform: translateY(-100vh) scale(1); opacity: 0; }}
             }}
             
-            #loading-bar-container {{
-                width: 400px;
-                text-align: center;
-                z-index: 20;
-            }}
-            
+            #loading-bar-container {{ width: 400px; text-align: center; z-index: 20; }}
             #loading-bar-bg {{
-                width: 100%;
-                height: 4px;
-                background: rgba(0, 242, 254, 0.2);
-                border-radius: 2px;
-                overflow: hidden;
-                margin-bottom: 20px;
+                width: 100%; height: 4px; background: rgba(0, 242, 254, 0.2);
+                border-radius: 2px; overflow: hidden; margin-bottom: 20px;
                 box-shadow: 0 0 20px rgba(0, 242, 254, 0.3);
             }}
-            
             #loading-bar {{
-                height: 100%;
-                width: 0%;
+                height: 100%; width: 0%;
                 background: linear-gradient(90deg, #00f2fe, #ff00ff);
                 box-shadow: 0 0 30px #00f2fe;
                 animation: loadProgress 5s ease-out forwards;
             }}
-            
-            @keyframes loadProgress {{
-                0% {{ width: 0%; }}
-                100% {{ width: 100%; }}
-            }}
+            @keyframes loadProgress {{ 0% {{ width: 0%; }} 100% {{ width: 100%; }} }}
             
             #loading-text {{
-                color: #00f2fe;
-                font-size: 16px;
-                letter-spacing: 8px;
-                font-weight: 900;
-                text-shadow: 0 0 20px #00f2fe;
+                color: #00f2fe; font-size: 16px; letter-spacing: 8px;
+                font-weight: 900; text-shadow: 0 0 20px #00f2fe;
                 text-transform: uppercase;
             }}
             
             #metrics {{
-                position: fixed;
-                bottom: 20px; right: 20px;
+                position: fixed; bottom: 20px; right: 20px;
                 background: rgba(0, 242, 254, 0.1);
                 border: 1px solid rgba(0, 242, 254, 0.3);
-                border-radius: 8px;
-                padding: 10px 15px;
-                color: #00f2fe;
-                font-size: 11px;
-                z-index: 30;
+                border-radius: 8px; padding: 10px 15px;
+                color: #00f2fe; font-size: 11px; z-index: 30;
             }}
-            
             .metric {{ margin: 3px 0; }}
-            .metric-label {{ opacity: 0.7; }}
-            .metric-value {{ font-weight: bold; margin-left: 10px; }}
             .good {{ color: #00ff41; }}
         </style>
     </head>
     <body>
         <div id="fallback-bg"></div>
-        
-        {"" if not BASE64_VIDEO else f'''
-        <video autoplay loop muted playsinline id="bg-video">
-            <source src="data:video/mp4;base64,{BASE64_VIDEO}" type="video/mp4">
-        </video>
-        '''}
-        
+        {"" if not BASE64_VIDEO else f'''<video autoplay loop muted playsinline id="bg-video"><source src="data:video/mp4;base64,{BASE64_VIDEO}" type="video/mp4"></video>'''}
         <div id="loading-content">
             <div id="loading-bar-container">
-                <div id="loading-bar-bg">
-                    <div id="loading-bar"></div>
-                </div>
-                <div id="loading-text">INITIALIZING NEURAL INTERFACE...</div>
+                <div id="loading-bar-bg"><div id="loading-bar"></div></div>
+                <div id="loading-text">INITIALIZING...</div>
             </div>
         </div>
-        
         <div id="metrics">
-            <div class="metric">
-                <span class="metric-label">Status:</span>
-                <span class="metric-value good" id="status">Loading...</span>
-            </div>
-            <div class="metric">
-                <span class="metric-label">Time:</span>
-                <span class="metric-value good" id="timer">0.0s</span>
-            </div>
+            <div class="metric"><span style="opacity:0.7">Status:</span> <span class="good" id="status">Loading...</span></div>
+            <div class="metric"><span style="opacity:0.7">Time:</span> <span class="good" id="timer">0.0s</span></div>
         </div>
-        
         <script>
             const startTime = performance.now();
             const statusEl = document.getElementById('status');
             const timerEl = document.getElementById('timer');
             const textEl = document.getElementById('loading-text');
             
-            // Create particles
-            for (let i = 0; i < 20; i++) {{
-                const particle = document.createElement('div');
-                particle.className = 'particle';
-                particle.style.left = Math.random() * 100 + 'vw';
-                particle.style.bottom = '-10px';
-                particle.style.animationDuration = (Math.random() * 3 + 2) + 's';
-                particle.style.animationDelay = (Math.random() * 2) + 's';
-                document.body.appendChild(particle);
+            // Only create particles on wider screens to save mobile performance
+            if (window.innerWidth > 768) {{
+                for (let i = 0; i < 20; i++) {{
+                    const p = document.createElement('div');
+                    p.className = 'particle';
+                    p.style.left = Math.random() * 100 + 'vw';
+                    p.style.bottom = '-10px';
+                    p.style.animationDuration = (Math.random() * 3 + 2) + 's';
+                    p.style.animationDelay = (Math.random() * 2) + 's';
+                    document.body.appendChild(p);
+                }}
             }}
-            
-            // Update timer
+
             setInterval(() => {{
-                const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
-                timerEl.textContent = elapsed + 's';
+                timerEl.textContent = ((performance.now() - startTime) / 1000).toFixed(1) + 's';
             }}, 100);
             
-            // Text sequence
-            const messages = [
-                'INITIALIZING NEURAL INTERFACE...',
-                'NEURAL SYNC...',
-                'CALIBRATING SENSORS...',
-                'LOADING AI MODELS...',
-                'SYSTEM READY'
-            ];
-            let msgIndex = 0;
+            const msgs = ['INITIALIZING NEURAL INTERFACE...', 'NEURAL SYNC...', 'CALIBRATING SENSORS...', 'LOADING AI MODELS...', 'SYSTEM READY'];
+            let i = 0;
+            setInterval(() => {{ if (i < msgs.length) textEl.textContent = msgs[i++]; }}, 1200);
             
-            setInterval(() => {{
-                if (msgIndex < messages.length) {{
-                    textEl.textContent = messages[msgIndex++];
-                }}
-            }}, 1200);
-            
-            // Final update
             setTimeout(() => {{
                 textEl.textContent = 'ACCESS GRANTED';
                 textEl.style.color = '#00ff41';
                 statusEl.textContent = 'Complete ✓';
             }}, 5500);
             
-            {"" if not BASE64_VIDEO else '''
-            const video = document.getElementById('bg-video');
-            video.addEventListener('loadeddata', () => video.classList.add('loaded'));
-            '''}
+            {"" if not BASE64_VIDEO else "const v = document.getElementById('bg-video'); v.addEventListener('loadeddata', () => v.classList.add('loaded'));"}
         </script>
     </body>
     </html>
