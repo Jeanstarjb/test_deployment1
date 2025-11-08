@@ -402,6 +402,22 @@ st.markdown("""
            instead of it being zoomed in to cover the screen. */
         
         /* #bg-video { object-fit: contain !important; } */
+        
+            /* Fix stepper alignment on mobile */
+        .progress-stepper {
+            flex-direction: column !important;
+            gap: 10px !important;
+            align-items: flex-start !important;
+            padding: 10px !important;
+        }
+        .step-connector {
+            width: 2px !important;
+            height: 20px !important;
+            margin-left: 25px !important; /* Centers connector below circle */
+        }
+        .step {
+            width: 100% !important;
+        }
     }
             
     .custom-upload-wrapper [data-testid='stFileUploader'] {
