@@ -513,101 +513,40 @@ RIGHT EYE (OD):
 {right_pred_text}
 Detected Conditions: {', '.join(right_detected) if right_detected else 'None'}
 
-Please provide a comprehensive clinical report using EXACTLY this structure with proper markdown formatting:
+Please analyze both retinal images and provide a comprehensive clinical report with the following sections:
 
-## 1. EXECUTIVE SUMMARY
-- 2-3 sentence overview of key findings
-- Mention bilateral vs unilateral findings
-- Severity level (Normal/Mild/Moderate/Severe)
+1. SUMMARY OF FINDINGS
+   - Brief overview of key findings in both eyes
+   - Comparison between left and right eyes
 
-## 2. DETAILED FUNDUS ANALYSIS
+2. DETAILED ANALYSIS
+   - LEFT EYE: Describe visible pathological features and validate CNN predictions
+   - RIGHT EYE: Describe visible pathological features and validate CNN predictions
+   - Note any asymmetry or bilateral findings
 
-### LEFT EYE (OS)
-- **Image Quality**: Describe clarity and visibility
-- **Optic Disc**: Cup-to-disc ratio, color, margins
-- **Macula**: Central area appearance, any abnormalities
-- **Vessels**: Caliber, tortuosity, hemorrhages
-- **Periphery**: Any notable findings
-- **CNN Validation**: Does the image support or contradict CNN predictions?
-- **Primary Finding**: State the main pathology detected
+3. CLINICAL SIGNIFICANCE
+   - Severity assessment
+   - Progression risk
+   - Impact on vision and quality of life
 
-### RIGHT EYE (OD)
-- **Image Quality**: Describe clarity and visibility
-- **Optic Disc**: Cup-to-disc ratio, color, margins
-- **Macula**: Central area appearance, any abnormalities
-- **Vessels**: Caliber, tortuosity, hemorrhages
-- **Periphery**: Any notable findings
-- **CNN Validation**: Does the image support or contradict CNN predictions?
-- **Primary Finding**: State the main pathology detected
+4. DIFFERENTIAL DIAGNOSIS
+   - Primary diagnoses
+   - Alternative considerations
+   - Conditions requiring exclusion
 
-### Bilateral Comparison
-- Symmetry or asymmetry between eyes
-- Patterns suggesting systemic disease
+5. RECOMMENDED ACTIONS
+   - Immediate steps required
+   - Follow-up schedule
+   - Specialist referrals needed
+   - Additional tests recommended
+   - Lifestyle modifications
 
-## 3. CLINICAL DIAGNOSIS
+6. PATIENT COUNSELING POINTS
+   - Key information to communicate to the patient
+   - Warning signs to watch for
+   - Questions patient should ask their doctor
 
-### Primary Diagnosis
-- List main conditions with confidence level
-
-### Differential Diagnoses
-- Alternative possibilities to consider
-- Conditions that need to be ruled out
-
-### Risk Factors
-- Based on patient history and findings
-- Progression likelihood
-
-## 4. CLINICAL SIGNIFICANCE & PROGNOSIS
-
-- **Vision Impact**: How findings affect current vision
-- **Progression Risk**: Likelihood of worsening
-- **Urgency Level**: Routine / Urgent / Emergency
-- **Expected Outcomes**: With and without treatment
-
-## 5. RECOMMENDED MANAGEMENT PLAN
-
-### Immediate Actions (Within 1 week)
-- Specific steps needed now
-
-### Short-term (1-3 months)
-- Follow-up schedule
-- Additional tests needed
-
-### Long-term (3-12 months)
-- Monitoring frequency
-- Preventive measures
-
-### Specialist Referrals
-- Which specialists and why
-- Urgency of referral
-
-### Lifestyle & Self-care
-- Diet, exercise, habits to modify
-- Warning signs to watch for
-
-## 6. PATIENT COMMUNICATION GUIDE
-
-### What to Tell the Patient (in simple terms)
-- Explain findings without medical jargon
-- Reassurance where appropriate
-
-### Questions Patient Should Ask
-- List 3-5 important questions
-
-### Red Flag Symptoms
-- Symptoms requiring immediate medical attention
-
----
-
-**Important Guidelines:**
-- Be concise but thorough
-- Use bullet points for clarity
-- Avoid excessive medical jargon
-- Be specific with measurements when visible
-- If image quality prevents assessment of any structure, state this clearly
-- Correlate findings with patient's diabetic history
-- Prioritize actionable recommendations
-- Use **bold** for emphasis on critical findings"""
+Please be thorough, professional, and provide actionable clinical guidance. Use medical terminology but explain key concepts clearly."""
 
         # Generate content with both images
         response = model_gemini.generate_content([
