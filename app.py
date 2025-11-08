@@ -435,7 +435,7 @@ if not st.session_state.app_loaded:
     st.components.v1.html(loading_html, height=900, scrolling=False)
     
     # Reduced sleep time for localhost
-    time.sleep(7)
+    time.sleep(5)
     
     # Log metrics
     total_load_time = time.time() - st.session_state.loading_start_time
