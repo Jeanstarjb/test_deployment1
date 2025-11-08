@@ -14,7 +14,8 @@ import os
 from dotenv import load_dotenv
 
 # Setup logging
-
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # ================= LOADING SCREEN =================
 # Initialize first, before any checks
