@@ -52,7 +52,7 @@ if not st.session_state.app_loaded:
     elapsed = time.time() - st.session_state.loading_start_time
     
     # Force skip after 5 seconds (safety timeout)
-    if elapsed > 5:
+    if elapsed > 10:
         logger.warning(f"⚠️ Loading timeout at {elapsed:.2f}s - forcing skip")
         st.session_state.loading_metrics['timeout_triggered'] = True
         st.session_state.loading_metrics['total_time'] = elapsed
