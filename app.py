@@ -274,7 +274,7 @@ if not st.session_state.app_loaded:
     
     # ⭐ SAFE SLEEP METHOD - breaks into smaller chunks
     TOTAL_LOAD_TIME = 3  # ← ADJUST THIS (in seconds)
-    CHUNK_SIZE = 0.5  # Sleep in 0.5 second chunks
+    CHUNK_SIZE = 0.2  # Sleep in 0.5 second chunks
     
     chunks = int(TOTAL_LOAD_TIME / CHUNK_SIZE)
     for i in range(chunks):
