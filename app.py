@@ -153,13 +153,13 @@ if not st.session_state.app_loaded:
                 width: 100%;
                 height: 100%;
                 background: 
-                    radial-gradient(circle at 20% 80%, rgba(79, 172, 254, 0.3) 0%, transparent 60%),
-                    radial-gradient(circle at 80% 20%, rgba(255, 0, 255, 0.3) 0%, transparent 60%),
-                    radial-gradient(circle at 50% 50%, rgba(0, 242, 254, 0.2) 0%, transparent 70%),
-                    linear-gradient(135deg, #000 0%, #0a0a12 50%, #000 100%);
+                    radial-gradient(circle at 20% 80%, rgba(79, 172, 254, 0.1) 0%, transparent 50%),  /* ← Changed from 0.3 to 0.1 */
+                    radial-gradient(circle at 80% 20%, rgba(255, 0, 255, 0.1) 0%, transparent 50%),   /* ← Changed from 0.3 to 0.1 */
+                    radial-gradient(circle at 40% 40%, rgba(0, 242, 254, 0.05) 0%, transparent 50%),  /* ← Changed */
+                    linear-gradient(135deg, #0a0a12 0%, #1a1a2e 50%, #16213e 100%);  /* ← Match exactly */
                 z-index: -2;
                 animation: gradientShift 4s ease-in-out infinite, gradientMove 8s ease infinite;
-            }}
+            }}  
             
             @keyframes gradientShift {{
                 0%, 100% {{ filter: hue-rotate(0deg) brightness(1); }}
@@ -435,7 +435,7 @@ if not st.session_state.app_loaded:
     st.components.v1.html(loading_html, height=900, scrolling=False)
     
     # Reduced sleep time for localhost
-    time.sleep(7.5)
+    time.sleep(6.5)
     
     # Log metrics
     total_load_time = time.time() - st.session_state.loading_start_time
