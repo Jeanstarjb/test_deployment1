@@ -12,5 +12,3 @@ enableCORS = false
 
 [browser]
 gatherUsageStats = false
-
-.python-version (force Python 3.11)
