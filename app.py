@@ -28,6 +28,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+if 'workflow_step' not in st.session_state:
+    st.session_state.workflow_step = 1
+
 # Initialize Gemini API key from environment
 if 'gemini_api_key' not in st.session_state:
     st.session_state.gemini_api_key = os.getenv('GEMINI_API_KEY', '')
