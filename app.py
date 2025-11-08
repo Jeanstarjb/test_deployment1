@@ -435,14 +435,14 @@ if not st.session_state.app_loaded:
     st.components.v1.html(loading_html, height=900, scrolling=False)
     
     # Reduced sleep time for localhost
-    time.sleep(5.0)
+    time.sleep(10.0)
     
     # Log metrics
     total_load_time = time.time() - st.session_state.loading_start_time
     st.session_state.loading_metrics['total_time'] = total_load_time
     st.session_state.loading_metrics['method'] = 'VIDEO' if BASE64_VIDEO else 'CSS_OPTIMIZED'
     st.session_state.loading_metrics['video_loaded'] = bool(BASE64_VIDEO)
-    logger.info(f"✅ Loading complete - Total time: {total_load_time:.2f}s ({'Video mode' if BASE64_VIDEO else 'CSS optimized'})")
+    logger.info(f"✅ Loading complete - Total time: {total_load_time:.2f}s")
     
     st.session_state.app_loaded = True
     st.rerun()
