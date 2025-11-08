@@ -822,10 +822,7 @@ if st.session_state.workflow_step == 1:
     st.session_state.use_optimal_thresholds = True
     
     st.markdown("<br>", unsafe_allow_html=True)
-    
-    # --- IMAGE UPLOAD SECTION ---
-    st.markdown("## 📸 RETINAL IMAGE CAPTURE")
-    
+      
     col1, col2 = st.columns(2)
     # --- IMAGE UPLOAD SECTION ---
     st.markdown("## 📸 RETINAL IMAGE CAPTURE")
