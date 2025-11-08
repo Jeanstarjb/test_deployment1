@@ -52,7 +52,7 @@ if not st.session_state.app_loaded:
     elapsed = time.time() - st.session_state.loading_start_time
     
     # Force skip after 5 seconds (safety timeout)
-    if elapsed > 10:
+    if elapsed > 5:
         logger.warning(f"⚠️ Loading timeout at {elapsed:.2f}s - forcing skip")
         st.session_state.loading_metrics['timeout_triggered'] = True
         st.session_state.loading_metrics['total_time'] = elapsed
@@ -278,7 +278,7 @@ if not st.session_state.app_loaded:
                 width: 0%; 
                 background: #00f2fe; 
                 box-shadow: 0 0 30px #00f2fe; 
-                animation: loadProgress 6.0s ease-out forwards; 
+                animation: loadProgress 1.0s ease-out forwards; 
             }}
             
             @keyframes loadProgress {{ 
@@ -435,7 +435,7 @@ if not st.session_state.app_loaded:
     st.components.v1.html(loading_html, height=900, scrolling=False)
     
     # Reduced sleep time for localhost
-    time.sleep(5)
+    time.sleep(5.0)
     
     # Log metrics
     total_load_time = time.time() - st.session_state.loading_start_time
