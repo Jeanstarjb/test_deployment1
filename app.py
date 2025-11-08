@@ -1328,7 +1328,7 @@ Powered by: ResNet50 CNN + Google Gemini Vision AI
                 st.rerun()
         
         with col3:
-            if st.button("🏁 COMPLETE", use_container_width=Truee, type="primary"):
+            if st.button("🏁 COMPLETE", use_container_width=True, type="primary"):
                 st.balloons()
                 st.success("✅ Analysis workflow completed successfully!")
     else:
