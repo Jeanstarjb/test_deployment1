@@ -874,6 +874,10 @@ if st.session_state.workflow_step == 1:
     st.markdown("## 📸 RETINAL IMAGE CAPTURE")
     
     col1, col2 = st.columns(2)
+    # --- IMAGE UPLOAD SECTION ---
+    st.markdown("## 📸 RETINAL IMAGE CAPTURE")
+    
+    col1, col2 = st.columns(2)
     with col1:
         st.markdown('<div class="glass-card"><h3>👁 LEFT EYE (OS)</h3>', unsafe_allow_html=True)
         l_file = st.file_uploader("📁 Upload Left Eye", type=['png', 'jpg', 'jpeg'], key='l_up')
@@ -881,8 +885,8 @@ if st.session_state.workflow_step == 1:
             st.session_state.l_img = Image.open(l_file)
         
         if 'l_img' in st.session_state:
-            # STABILIZED: Use standard st.image instead of custom HTML
-            st.image(st.session_state.l_img, use_container_width=True)
+            # FIX: Changed use_container_width to use_column_width for compatibility
+            st.image(st.session_state.l_img, use_column_width=True)
             st.success("✅ Left image captured!")
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -893,10 +897,10 @@ if st.session_state.workflow_step == 1:
             st.session_state.r_img = Image.open(r_file)
             
         if 'r_img' in st.session_state:
-            # STABILIZED: Use standard st.image instead of custom HTML
-            st.image(st.session_state.r_img, use_container_width=True)
+            # FIX: Changed use_container_width to use_column_width for compatibility
+            st.image(st.session_state.r_img, use_column_width=True)
             st.success("✅ Right image captured!")
-    st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
     
     if st.button("🚀 INITIATE NEURAL ANALYSIS", use_container_width=True, type="primary"):
         if 'l_img' in st.session_state and 'r_img' in st.session_state:
