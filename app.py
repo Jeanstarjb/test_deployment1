@@ -297,7 +297,7 @@ if not st.session_state.app_loaded:
     st.components.v1.html(loading_html, height=900, scrolling=False)
     
     # ADJUST THIS VALUE FOR LOADING DURATION (seconds)
-    time.sleep(3.0)  # Change to 1.0, 2.0, 3.0, etc.
+    time.sleep(5.0)  # Change to 1.0, 2.0, 3.0, etc.
     
     # Complete loading
     total_load_time = time.time() - st.session_state.loading_start_time
