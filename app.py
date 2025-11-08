@@ -47,12 +47,15 @@ if 'app_loaded' not in st.session_state:
 if 'workflow_step' not in st.session_state:
     st.session_state.workflow_step = 1
 
-# ================= LOADING SCREEN =================
-if not st.session_state.app_loaded:
+# ================= LOADING SCREEN (DISABLED FOR CLOUD) =================
+# For local development, change SKIP_LOADING to False
+SKIP_LOADING = True  # Set to False for local dev with loading screen
+
+if not st.session_state.app_loaded and not SKIP_LOADING:
     elapsed = time.time() - st.session_state.loading_start_time
     
     # Force skip after 5 seconds (safety timeout)
-    if elapsed > 10:
+    if elapsed > 5:
         logger.warning(f"⚠️ Loading timeout at {elapsed:.2f}s - forcing skip")
         st.session_state.loading_metrics['timeout_triggered'] = True
         st.session_state.loading_metrics['total_time'] = elapsed
@@ -442,10 +445,19 @@ if not st.session_state.app_loaded:
     st.session_state.loading_metrics['total_time'] = total_load_time
     st.session_state.loading_metrics['method'] = 'VIDEO' if BASE64_VIDEO else 'CSS_OPTIMIZED'
     st.session_state.loading_metrics['video_loaded'] = bool(BASE64_VIDEO)
-    logger.info(f"✅ Loading complete - Total time: {total_load_time:.2f}s")
+    logger.info(f"✅ Loading complete - Total time: {total_load_time:.2f}s ({'Video mode' if BASE64_VIDEO else 'CSS optimized'})")
     
     st.session_state.app_loaded = True
     st.rerun()
+
+# If loading screen is skipped, mark as loaded
+if not st.session_state.app_loaded:
+    st.session_state.app_loaded = True
+    st.session_state.loading_metrics = {
+        'total_time': 0,
+        'method': 'SKIPPED',
+        'video_loaded': False
+    }
 
 # ================= LOAD MODEL =================
 @st.cache_resource
