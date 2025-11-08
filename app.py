@@ -384,52 +384,24 @@ st.markdown("""
     .step-connector { width: 60px; height: 2px; background: rgba(255,255,255,0.2); }
     .step-connector.completed { background: var(--matrix-green); }
 
-    /* --- MOBILE RESPONSIVENESS FIXES --- */
+    /* --- MOBILE RESPONSIVENESS FIXES (ALL IN ONE) --- */
     @media only screen and (max-width: 768px) {
-        /* Restore standard side margins on mobile */
-        .block-container {
-            padding-left: 1rem !important;
-            padding-right: 1rem !important;
-        }
+        /* 1. Fix Squeezed UI */
+        .block-container { padding-left: 1rem !important; padding-right: 1rem !important; }
+        .hero-title { font-size: 3rem !important; }
+        .hero-subtitle { font-size: 1.2rem !important; letter-spacing: 3px !important; }
+        .glass-card { padding: 15px !important; }
+        [data-testid="column"] { width: 100% !important; flex: 1 1 auto !important; min-width: auto !important; }
+        #loading-bar-container { width: 90% !important; }
+        .step-circle { width: 35px !important; height: 35px !important; font-size: 1rem !important; }
+        .step-label { font-size: 0.7rem !important; }
+        .step-connector { width: 30px !important; }
+
+        /* 2. Fix Giant Video on Phone (Optional)
+           Remove the '/*' and '*/' below if you want to see the WHOLE video 
+           instead of it being zoomed in to cover the screen. */
         
-        /* Shrink giant hero text */
-        .hero-title {
-            font-size: 3rem !important;
-        }
-        .hero-subtitle {
-            font-size: 1.2rem !important;
-            letter-spacing: 3px !important;
-        }
-        
-        /* Reduce card padding to save space */
-        .glass-card {
-            padding: 15px !important;
-        }
-        
-        /* Force columns to stack vertically on small screens */
-        [data-testid="column"] {
-            width: 100% !important;
-            flex: 1 1 auto !important;
-            min-width: auto !important;
-        }
-        
-        /* Fix loading screen width */
-        #loading-bar-container {
-            width: 90% !important;
-        }
-        
-        /* Adjust stepper size */
-        .step-circle {
-            width: 35px !important;
-            height: 35px !important;
-            font-size: 1rem !important;
-        }
-        .step-label {
-            font-size: 0.7rem !important;
-        }
-        .step-connector {
-            width: 30px !important;
-        }
+        /* #bg-video { object-fit: contain !important; } */
     }
             
     .custom-upload-wrapper [data-testid='stFileUploader'] {
