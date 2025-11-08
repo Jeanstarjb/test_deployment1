@@ -478,7 +478,7 @@ def generate_llm_report(left_results, right_results, left_image, right_image, pa
         genai.configure(api_key=st.session_state.gemini_api_key)
         
         # Use Gemini Pro Vision model
-        model_gemini = genai.GenerativeModel('gemini-2.0-flash-exp')
+        model_gemini = genai.GenerativeModel('gemini-2.5-flash')
         
         # Format predictions text with detected conditions highlighted
         def format_eye_predictions(results):
