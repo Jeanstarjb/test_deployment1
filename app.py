@@ -451,7 +451,7 @@ if not st.session_state.app_loaded:
 @st.cache_resource
 def load_model():
     try:
-        model = tf.keras.models.load_model("C:/Users/Shifter/Downloads/my_ocular_model_resnet50 (5).keras", compile=False)
+        model = tf.keras.models.load_model("my_ocular_model_resnet50 (5).keras", compile=False)
         logger.info("✅ Model loaded successfully")
         return model
     except Exception as e:
