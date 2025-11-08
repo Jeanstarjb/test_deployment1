@@ -119,13 +119,13 @@ if not st.session_state.app_loaded:
                 z-index: -1; 
                 transform: translate(-50%, -50%);
                 opacity: 0;
-                filter: hue-rotate(180deg) contrast(1.2); 
+                filter: hue-rotate(180deg) contrast(1.05); 
                 object-fit: cover;
                 transition: opacity 0.8s ease-in;
             }
             
             #bg-video.loaded {
-                opacity: 0.6;
+                opacity: 0.4;
             }
         """
     else:
@@ -435,7 +435,7 @@ if not st.session_state.app_loaded:
     st.components.v1.html(loading_html, height=900, scrolling=False)
     
     # Reduced sleep time for localhost
-    time.sleep(10.0)
+    time.sleep(7.5)
     
     # Log metrics
     total_load_time = time.time() - st.session_state.loading_start_time
