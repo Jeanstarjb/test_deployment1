@@ -25,7 +25,7 @@ st.set_page_config(
     page_title="OCULUS | AI Diagnostics",
     page_icon="👁‍🗨",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 if 'workflow_step' not in st.session_state:
