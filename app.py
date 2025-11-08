@@ -273,7 +273,7 @@ if not st.session_state.app_loaded:
     st.components.v1.html(loading_html, height=900, scrolling=False)
     
     # ⭐ SAFE SLEEP METHOD - breaks into smaller chunks
-    TOTAL_LOAD_TIME = 6.0  # ← ADJUST THIS (in seconds)
+    TOTAL_LOAD_TIME = 3  # ← ADJUST THIS (in seconds)
     CHUNK_SIZE = 0.5  # Sleep in 0.5 second chunks
     
     chunks = int(TOTAL_LOAD_TIME / CHUNK_SIZE)
