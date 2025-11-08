@@ -49,7 +49,7 @@ if 'workflow_step' not in st.session_state:
 
 # ================= LOADING SCREEN (DISABLED FOR CLOUD) =================
 # For local development, change SKIP_LOADING to False
-SKIP_LOADING = True  # Set to False for local dev with loading screen
+SKIP_LOADING = False  # Set to False for local dev with loading screen
 
 if not st.session_state.app_loaded and not SKIP_LOADING:
     elapsed = time.time() - st.session_state.loading_start_time
