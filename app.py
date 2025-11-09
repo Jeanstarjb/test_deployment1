@@ -252,50 +252,62 @@ if not st.session_state.app_loaded:
 @st.cache_resource
 def load_model():
     try:
-        logger.info("🏗️ Attempting to reconstruct full model...")
+        logger.info("🏗️ Attempting to load complete model...")
         
-        # 1. Load DenseNet121 base
-        base_model = tf.keras.applications.DenseNet121(
-            include_top=False, 
-            weights='imagenet', 
-            input_shape=(224, 224, 3)
-        )
-        base_model.trainable = False 
-        
-        # 2. Reconstruct head EXACTLY as in training
-        x = base_model.output
-        
-        # Match the EXACT layer names from training
-        x = tf.keras.layers.GlobalAveragePooling2D(name='avg_pool')(x)  # ✅ Fixed name
-        x = tf.keras.layers.Dropout(0.5)(x)  # No name in training
-        x = tf.keras.layers.Dense(512, activation='relu')(x)  # No name in training
-        x = tf.keras.layers.Dropout(0.5)(x)  # No name in training
-        
-        # CRITICAL: Use the exact name from training!
-        predictions = tf.keras.layers.Dense(8, activation='sigmoid', name='predictions')(x)  # ✅ Fixed name
-        
-        # 3. Create model
-        full_model = tf.keras.models.Model(inputs=base_model.input, outputs=predictions)
-        
-        # 4. Load weights
-        full_model.load_weights("densenet121_weights.h5", by_name=True, skip_mismatch=True)
-        
-        logger.info("✅ FULL model reconstructed successfully!")
-        
-        # 5. VERIFY weights were loaded for output layer
-        output_layer = full_model.get_layer('predictions')
-        logger.info(f"✅ Output layer '{output_layer.name}' has {len(output_layer.get_weights())} weight arrays")
-        
-        return full_model
-        
+        # Try loading as a complete model first
+        try:
+            full_model = tf.keras.models.load_model("densenet121_weights.h5", compile=False)
+            logger.info("✅ Loaded as complete model")
+            
+            # Recompile
+            full_model.compile(
+                optimizer='adam',
+                loss='binary_crossentropy',
+                metrics=['accuracy']
+            )
+            
+            logger.info("✅ Model loaded successfully!")
+            return full_model
+            
+        except Exception as e1:
+            logger.warning(f"⚠️ Not a complete model file: {e1}")
+            
+            # Fall back to reconstruction method
+            logger.info("📦 Trying weight loading method...")
+            
+            base_model = tf.keras.applications.DenseNet121(
+                include_top=False, 
+                weights='imagenet', 
+                input_shape=(224, 224, 3)
+            )
+            base_model.trainable = False 
+            
+            x = base_model.output
+            x = tf.keras.layers.GlobalAveragePooling2D(name='avg_pool')(x)
+            x = tf.keras.layers.Dropout(0.5)(x)
+            x = tf.keras.layers.Dense(512, activation='relu')(x)
+            x = tf.keras.layers.Dropout(0.5)(x)
+            predictions = tf.keras.layers.Dense(8, activation='sigmoid', name='predictions')(x)
+            
+            full_model = tf.keras.models.Model(inputs=base_model.input, outputs=predictions)
+            
+            full_model.compile(
+                optimizer='adam',
+                loss='binary_crossentropy',
+                metrics=['accuracy']
+            )
+            
+            # Load weights
+            full_model.load_weights("densenet121_weights.h5")
+            logger.info("✅ Weights loaded successfully!")
+            
+            return full_model
+            
     except Exception as e:
-        logger.error(f"❌ Model reconstruction failed: {e}")
-        st.error(f"Failed to reconstruct model. Error: {e}")
-        return None
-
-    except Exception as e:
-        logger.error(f"❌ Model reconstruction failed: {e}")
-        st.error(f"Failed to reconstruct model. Error: {e}")
+        logger.error(f"❌ All loading methods failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        st.error(f"Failed to load model. Error: {e}")
         return None
 
 # Initialize model
