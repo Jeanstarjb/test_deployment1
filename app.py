@@ -878,92 +878,95 @@ if st.session_state.workflow_step == 1:
         st.markdown('</div>', unsafe_allow_html=True)
     
     if st.button("🚀 INITIATE NEURAL ANALYSIS", use_container_width=True, type="primary"):
-        if 'l_img' in st.session_state and 'r_img' in st.session_state:
-            if model is None:
-                st.error("❌ Model not loaded. Cannot perform analysis.")
-            else:
-                # ===== PHASE 1: VALIDATE IMAGES =====
+    if 'l_img' in st.session_state and 'r_img' in st.session_state:
+        if model is None:
+            st.error("❌ Model not loaded. Cannot perform analysis.")
+        else:
+            # Store images temporarily to avoid session state issues
+            left_image = st.session_state.l_img
+            right_image = st.session_state.r_img
+            
+            # ===== PHASE 1: VALIDATE IMAGES (SIMPLIFIED) =====
+            validation_needed = st.session_state.get('gemini_api_key') is not None
+            
+            if validation_needed:
                 st.info("🔍 **Phase 1/2:** Validating fundus images with AI...")
                 
-                validation_container = st.container()
+                col1, col2 = st.columns(2)
                 
-                with validation_container:
-                    col1, col2 = st.columns(2)
+                # Validate left eye
+                with col1:
+                    with st.spinner("Validating left eye..."):
+                        l_valid, l_conf, l_msg = validate_fundus_image(left_image)
                     
-                    with col1:
-                        with st.spinner("Validating left eye image..."):
-                            l_valid, l_conf, l_msg = validate_fundus_image(st.session_state.l_img)
-                        
-                        if l_valid and l_conf != "skipped":
-                            st.success("✅ Left Eye: Valid")
-                            with st.expander("📋 View Validation Details"):
-                                st.markdown(l_msg)
-                        elif l_conf == "skipped":
-                            st.warning("⚠️ Left Eye: Validation Skipped")
-                            st.info(l_msg)
-                        else:
-                            st.error("❌ Left Eye: Invalid")
-                            st.warning(l_msg)
-                    
-                    with col2:
-                        with st.spinner("Validating right eye image..."):
-                            r_valid, r_conf, r_msg = validate_fundus_image(st.session_state.r_img)
-                        
-                        if r_valid and r_conf != "skipped":
-                            st.success("✅ Right Eye: Valid")
-                            with st.expander("📋 View Validation Details"):
-                                st.markdown(r_msg)
-                        elif r_conf == "skipped":
-                            st.warning("⚠️ Right Eye: Validation Skipped")
-                            st.info(r_msg)
-                        else:
-                            st.error("❌ Right Eye: Invalid")
-                            st.warning(r_msg)
+                    if l_valid:
+                        st.success("✅ Left Eye: Valid")
+                    else:
+                        st.error("❌ Left Eye: Invalid")
+                        st.warning(l_msg)
                 
-                # Check if both images are valid
-                if (not l_valid or not r_valid) and l_conf != "skipped" and r_conf != "skipped":
-                    st.error("🚫 **Analysis Blocked:** One or more images failed validation.")
-                    st.info("💡 **Please upload proper retinal fundus photographs and try again.**")
+                # Validate right eye
+                with col2:
+                    with st.spinner("Validating right eye..."):
+                        r_valid, r_conf, r_msg = validate_fundus_image(right_image)
                     
-                    if st.button("🔄 Try Again", use_container_width=True):
-                        st.rerun()
-                    
+                    if r_valid:
+                        st.success("✅ Right Eye: Valid")
+                    else:
+                        st.error("❌ Right Eye: Invalid")
+                        st.warning(r_msg)
+                
+                # Block if invalid
+                if not l_valid or not r_valid:
+                    st.error("🚫 **Analysis Blocked:** Invalid images detected.")
+                    st.info("💡 Please upload proper fundus photographs.")
                     st.stop()
                 
-                # ===== PHASE 2: PROCEED WITH CNN ANALYSIS =====
-                if l_conf != "skipped" and r_conf != "skipped":
-                    st.success("✅ Both images validated successfully!")
+                st.success("✅ Both images validated!")
+            else:
+                st.warning("⚠️ Validation skipped (No Gemini API key)")
+            
+            # ===== PHASE 2: CNN ANALYSIS (SIMPLIFIED) =====
+            st.info("🧠 **Running CNN analysis...**")
+            
+            # Simple progress without complex animations
+            with st.spinner("Processing images..."):
+                time.sleep(1)  # Brief pause for UX
                 
-                st.info("🧠 **Phase 2/2:** Running CNN diagnostic analysis...")
+                # Run predictions
+                l_pred = predict_diseases(left_image)
+                r_pred = predict_diseases(right_image)
                 
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                for i in range(100):
-                    progress_bar.progress(i + 1)
-                    if i < 33:
-                        status_text.markdown(f"<h3 style='text-align:center; color: var(--primary)'>Initializing... {i+1}%</h3>", unsafe_allow_html=True)
-                    elif i < 66:
-                        status_text.markdown(f"<h3 style='text-align:center; color: var(--neon-pink)'>Processing... {i+1}%</h3>", unsafe_allow_html=True)
-                    else:
-                        status_text.markdown(f"<h3 style='text-align:center; color: var(--matrix-green)'>Finalizing... {i+1}%</h3>", unsafe_allow_html=True)
-                    time.sleep(0.02)
-
-                st.session_state.l_pred = predict_diseases(st.session_state.l_img)
-                st.session_state.r_pred = predict_diseases(st.session_state.r_img)
-                
-                # Store validation results
-                st.session_state.l_validation = {'valid': l_valid, 'confidence': l_conf, 'message': l_msg}
-                st.session_state.r_validation = {'valid': r_valid, 'confidence': r_conf, 'message': r_msg}
-                
+                # Store results
+                st.session_state.l_pred = l_pred
+                st.session_state.r_pred = r_pred
                 st.session_state.results_ready = True
                 
-                st.success("🎉 Analysis complete!")
-                time.sleep(1)
-                st.session_state.workflow_step = 2
-                st.rerun()
-        else:
-            st.error("❌ Please upload both images")
+                # Store validation info if done
+                if validation_needed:
+                    st.session_state.l_validation = {
+                        'valid': l_valid, 
+                        'confidence': l_conf, 
+                        'message': l_msg
+                    }
+                    st.session_state.r_validation = {
+                        'valid': r_valid, 
+                        'confidence': r_conf, 
+                        'message': r_msg
+                    }
+            
+            st.success("🎉 Analysis complete!")
+            
+            # CRITICAL: Minimal delay before rerun
+            time.sleep(0.5)
+            
+            # Update workflow step
+            st.session_state.workflow_step = 2
+            
+            # Rerun immediately
+            st.rerun()
+    else:
+        st.error("❌ Please upload both images")
 
     
     st.markdown('</div>', unsafe_allow_html=True)
