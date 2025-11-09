@@ -29,5 +29,5 @@ Thumbs.db
 *.log
 
 # Model files (if too large for GitHub)
-*.h5
+
 *.pb
