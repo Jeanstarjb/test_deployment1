@@ -470,167 +470,101 @@ def format_predictions(predictions, use_optimal_thresholds=True):
     
     return results, detected
 
-def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None):
-    """
-    Generate Grad-CAM heatmap for explainability
-    
-    Args:
-        img_array: Preprocessed image array (1, 224, 224, 3)
-        model: Trained Keras model
-        last_conv_layer_name: Name of last convolutional layer
-        pred_index: Class index to generate heatmap for (None = highest prediction)
-    
-    Returns:
-        heatmap: numpy array of heatmap values
-    """
+ ================= GRAD-CAM IMPLEMENTATION (SAFE VERSION) =================
+
+def find_last_conv_layer(model):
+    """Find the last convolutional layer in the model"""
     try:
-        # Create a model that maps input to activations + predictions
+        for layer in reversed(model.layers):
+            if len(layer.output_shape) == 4:  # Conv layer has 4D output
+                logger.info(f"Found last conv layer: {layer.name}")
+                return layer.name
+    except Exception as e:
+        logger.error(f"Error finding conv layer: {e}")
+    return None
+
+def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None):
+    """Generate Grad-CAM heatmap for explainability"""
+    try:
+        import cv2  # Import here to avoid failure if not installed
+        
+        # Create gradient model
         grad_model = tf.keras.models.Model(
             inputs=[model.inputs],
             outputs=[model.get_layer(last_conv_layer_name).output, model.output]
         )
         
-        # Compute gradient of top predicted class with respect to feature map
+        # Compute gradients
         with tf.GradientTape() as tape:
             conv_outputs, predictions = grad_model(img_array)
             if pred_index is None:
                 pred_index = tf.argmax(predictions[0])
             class_channel = predictions[:, pred_index]
         
-        # Gradient of output neuron with respect to feature map
         grads = tape.gradient(class_channel, conv_outputs)
-        
-        # Mean intensity of gradient over specific feature map channel
         pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
         
-        # Multiply each channel by importance and sum
         conv_outputs = conv_outputs[0]
         heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
         heatmap = tf.squeeze(heatmap)
         
-        # Normalize heatmap
+        # Normalize
         heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
         return heatmap.numpy()
         
+    except ImportError:
+        logger.error("OpenCV not installed. Grad-CAM unavailable.")
+        return None
     except Exception as e:
         logger.error(f"Error generating Grad-CAM: {e}")
         return None
 
-def create_gradcam_overlay(image, heatmap, alpha=0.4, colormap=cv2.COLORMAP_JET):
-    """
-    Create visualization overlay of Grad-CAM heatmap on original image
-    
-    Args:
-        image: PIL Image object
-        heatmap: Grad-CAM heatmap array
-        alpha: Transparency of overlay (0=transparent, 1=opaque)
-        colormap: OpenCV colormap to use
-    
-    Returns:
-        PIL Image with heatmap overlay
-    """
+def create_gradcam_overlay(image, heatmap, alpha=0.4):
+    """Create visualization overlay of Grad-CAM heatmap"""
     try:
-        # Convert PIL to numpy
-        img_array = np.array(image.resize((224, 224)))
+        import cv2
         
-        # Resize heatmap to match image
+        img_array = np.array(image.resize((224, 224)))
         heatmap_resized = cv2.resize(heatmap, (img_array.shape[1], img_array.shape[0]))
         
-        # Convert heatmap to RGB
         heatmap_colored = np.uint8(255 * heatmap_resized)
-        heatmap_colored = cv2.applyColorMap(heatmap_colored, colormap)
+        heatmap_colored = cv2.applyColorMap(heatmap_colored, cv2.COLORMAP_JET)
         heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
         
-        # Overlay heatmap on original image
         overlayed_img = cv2.addWeighted(img_array, 1-alpha, heatmap_colored, alpha, 0)
-        
-        # Convert back to PIL
         return Image.fromarray(overlayed_img)
         
+    except ImportError:
+        logger.error("OpenCV not installed")
+        return image
     except Exception as e:
         logger.error(f"Error creating overlay: {e}")
         return image
 
-def generate_all_gradcams(image, model, predictions, last_conv_layer='conv5_block3_out'):
-    """
-    Generate Grad-CAM visualizations for top predictions
-    
-    Args:
-        image: PIL Image
-        model: Trained model
-        predictions: Array of prediction probabilities
-        last_conv_layer: Name of last conv layer (adjust for your model)
-    
-    Returns:
-        dict: {disease_name: overlay_image}
-    """
-    gradcam_images = {}
-    
-    # Get preprocessed image
-    img_array = preprocess_image(image)
-    
-    # Get top 3 predictions
-    top_indices = np.argsort(predictions)[-3:][::-1]
-    
-    for idx in top_indices:
-        disease_name = DISEASE_NAMES[idx]
-        confidence = predictions[idx]
-        
-        # Only generate for predictions > 10%
-        if confidence > 0.1:
-            heatmap = make_gradcam_heatmap(img_array, model, last_conv_layer, pred_index=idx)
-            
-            if heatmap is not None:
-                overlay = create_gradcam_overlay(image, heatmap, alpha=0.5)
-                gradcam_images[disease_name] = {
-                    'image': overlay,
-                    'confidence': confidence,
-                    'heatmap': heatmap
-                }
-    
-    return gradcam_images
-
-# ================= FIND YOUR MODEL'S LAST CONV LAYER =================
-# Add this helper function to identify the correct layer name
-
-def find_last_conv_layer(model):
-    """
-    Automatically find the last convolutional layer in the model
-    """
-    for layer in reversed(model.layers):
-        # Check if layer is Conv2D
-        if len(layer.output_shape) == 4:  # (batch, height, width, channels)
-            return layer.name
-    return None
-
-# ================= UPDATE predict_diseases FUNCTION =================
-# Modify your existing predict_diseases function to also return Grad-CAMs
-
 def predict_diseases_with_gradcam(image):
-    """Get predictions from CNN model with Grad-CAM explanations"""
+    """Get predictions with optional Grad-CAM"""
     if model is None:
-        st.error("❌ Model not loaded. Please check model path.")
+        st.error("❌ Model not loaded")
         return None, None
     
     # Get predictions
     processed = preprocess_image(image)
     predictions = model.predict(processed, verbose=0)[0]
     
-    # Generate Grad-CAM visualizations
+    # Try to generate Grad-CAM (optional)
+    gradcams = None
     try:
-        # Try to find last conv layer automatically
         last_conv_layer = find_last_conv_layer(model)
         
         if last_conv_layer is None:
-            # Common layer names for ResNet50
+            # Try common ResNet50 layer names
             possible_layers = [
                 'conv5_block3_out',
-                'conv5_block3_3_conv',
-                'post_relu',
-                'activation_49'
+                'conv5_block3_3_conv', 
+                'conv5_block3_3_relu',
+                'top_activation'
             ]
             
-            # Try each possible layer name
             for layer_name in possible_layers:
                 try:
                     model.get_layer(layer_name)
@@ -641,13 +575,26 @@ def predict_diseases_with_gradcam(image):
                     continue
         
         if last_conv_layer:
-            gradcams = generate_all_gradcams(image, model, predictions, last_conv_layer)
-        else:
-            logger.warning("Could not find convolutional layer for Grad-CAM")
-            gradcams = None
+            # Generate Grad-CAMs for top 3 predictions
+            gradcams = {}
+            top_indices = np.argsort(predictions)[-3:][::-1]
             
+            for idx in top_indices:
+                disease_name = DISEASE_NAMES[idx]
+                confidence = predictions[idx]
+                
+                if confidence > 0.1:  # Only if >10% confidence
+                    heatmap = make_gradcam_heatmap(processed, model, last_conv_layer, pred_index=idx)
+                    
+                    if heatmap is not None:
+                        overlay = create_gradcam_overlay(image, heatmap, alpha=0.5)
+                        gradcams[disease_name] = {
+                            'image': overlay,
+                            'confidence': confidence
+                        }
+        
     except Exception as e:
-        logger.error(f"Error generating Grad-CAMs: {e}")
+        logger.warning(f"Grad-CAM generation failed: {e}")
         gradcams = None
     
     return predictions, gradcams
@@ -1119,13 +1066,13 @@ if st.session_state.workflow_step == 1:
                     time.sleep(1)  # Brief pause for UX
                     
                     # Run predictions
-                    l_pred, l_gradcams = predict_diseases_with_gradcam(left_image)
-                    r_pred, r_gradcams = predict_diseases_with_gradcam(right_image)
+                    l_pred, l_gradcams = predict_diseases_with_gradcam(st.session_state.l_img)
+                    r_pred, r_gradcams = predict_diseases_with_gradcam(st.session_state.r_img)
 
                     st.session_state.l_pred = l_pred
                     st.session_state.r_pred = r_pred
-                    st.session_state.l_gradcams = l_gradcams
-                    st.session_state.r_gradcams = r_gradcams
+                    st.session_state.l_gradcams = l_gradcams if l_gradcams else {}
+                    st.session_state.r_gradcams = r_gradcams if r_gradcams else {}
                     
                     # Store results
                     st.session_state.results_ready = True
@@ -1243,104 +1190,35 @@ elif st.session_state.workflow_step == 2:
         has_left_gradcam = 'l_gradcams' in st.session_state and st.session_state.l_gradcams
         has_right_gradcam = 'r_gradcams' in st.session_state and st.session_state.r_gradcams
         
-        if has_left_gradcam or has_right_gradcam:
-            # Create tabs for each eye
-            tab1, tab2 = st.tabs(["👁 Left Eye Explainability", "👁 Right Eye Explainability"])
+        # ===== GRAD-CAM VISUALIZATIONS =====
+        if st.session_state.get('l_gradcams') or st.session_state.get('r_gradcams'):
+            st.markdown("---")
+            st.markdown("## 🔬 AI Explainability: Grad-CAM Heatmaps")
+            st.info("💡 Red/yellow areas show regions the AI focused on when making its diagnosis.")
+            
+            tab1, tab2 = st.tabs(["👁 Left Eye", "👁 Right Eye"])
             
             with tab1:
-                if has_left_gradcam:
-                    st.markdown("### Left Eye (OS) - Decision Heatmaps")
-                    
-                    # Display original image
-                    col_orig, col_space = st.columns([1, 2])
-                    with col_orig:
-                        st.markdown("**Original Image**")
-                        st.image(st.session_state.l_img, use_column_width=True)
-                    
-                    # Display Grad-CAMs for top predictions
-                    st.markdown("**AI Decision Heatmaps (Top Predictions)**")
-                    
-                    gradcam_cols = st.columns(min(len(st.session_state.l_gradcams), 3))
-                    
+                if st.session_state.get('l_gradcams'):
+                    cols = st.columns(min(len(st.session_state.l_gradcams), 3))
                     for idx, (disease, data) in enumerate(st.session_state.l_gradcams.items()):
-                        if idx < 3:  # Show max 3
-                            with gradcam_cols[idx]:
-                                st.markdown(f"**{disease}**")
-                                st.markdown(f"*Confidence: {data['confidence']:.1%}*")
+                        if idx < 3:
+                            with cols[idx]:
+                                st.markdown(f"**{disease}** ({data['confidence']:.1%})")
                                 st.image(data['image'], use_column_width=True)
-                                
-                                # Interpretation
-                                if disease == 'Normal':
-                                    st.success("✅ Uniform attention across retina")
-                                elif disease == 'Glaucoma':
-                                    st.warning("🎯 Focus on optic disc area")
-                                elif disease == 'Diabetes':
-                                    st.warning("🎯 Focus on microaneurysms/hemorrhages")
-                                elif disease == 'Cataract':
-                                    st.warning("🎯 Focus on lens opacity areas")
-                                else:
-                                    st.info("🎯 Model focusing on specific pathology")
                 else:
-                    st.warning("⚠️ Grad-CAM visualization not available for left eye")
+                    st.warning("No heatmaps available")
             
             with tab2:
-                if has_right_gradcam:
-                    st.markdown("### Right Eye (OD) - Decision Heatmaps")
-                    
-                    # Display original image
-                    col_orig, col_space = st.columns([1, 2])
-                    with col_orig:
-                        st.markdown("**Original Image**")
-                        st.image(st.session_state.r_img, use_column_width=True)
-                    
-                    # Display Grad-CAMs for top predictions
-                    st.markdown("**AI Decision Heatmaps (Top Predictions)**")
-                    
-                    gradcam_cols = st.columns(min(len(st.session_state.r_gradcams), 3))
-                    
+                if st.session_state.get('r_gradcams'):
+                    cols = st.columns(min(len(st.session_state.r_gradcams), 3))
                     for idx, (disease, data) in enumerate(st.session_state.r_gradcams.items()):
-                        if idx < 3:  # Show max 3
-                            with gradcam_cols[idx]:
-                                st.markdown(f"**{disease}**")
-                                st.markdown(f"*Confidence: {data['confidence']:.1%}*")
+                        if idx < 3:
+                            with cols[idx]:
+                                st.markdown(f"**{disease}** ({data['confidence']:.1%})")
                                 st.image(data['image'], use_column_width=True)
-                                
-                                # Interpretation
-                                if disease == 'Normal':
-                                    st.success("✅ Uniform attention across retina")
-                                elif disease == 'Glaucoma':
-                                    st.warning("🎯 Focus on optic disc area")
-                                elif disease == 'Diabetes':
-                                    st.warning("🎯 Focus on microaneurysms/hemorrhages")
-                                elif disease == 'Cataract':
-                                    st.warning("🎯 Focus on lens opacity areas")
-                                else:
-                                    st.info("🎯 Model focusing on specific pathology")
                 else:
-                    st.warning("⚠️ Grad-CAM visualization not available for right eye")
-            
-            # Explainability legend
-            st.markdown("---")
-            st.markdown("### 🎨 Heatmap Color Guide")
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                st.markdown("🔴 **Red/Yellow**")
-                st.caption("High importance - Model focused here")
-            with col2:
-                st.markdown("🟢 **Green**")
-                st.caption("Moderate importance")
-            with col3:
-                st.markdown("🔵 **Blue/Purple**")
-                st.caption("Low importance")
-            with col4:
-                st.markdown("⚫ **Black**")
-                st.caption("Not considered")
-        else:
-            st.warning("⚠️ Grad-CAM visualizations could not be generated. This may happen if the model architecture is incompatible.")
-            st.info("💡 The predictions are still valid - only the explainability heatmaps are unavailable.")
-        
-        st.markdown("---")
+                    st.warning("No heatmaps available")
         
         # Navigation buttons
         col1, col2, col3 = st.columns([1, 2, 1])
