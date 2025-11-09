@@ -285,7 +285,7 @@ def load_model():
         # 4. Transplant your saved weights into this new body
         # 'by_name=True' is crucial here - it only loads matching layers
         # 'skip_mismatch=True' ignores layers that don't match perfectly
-        full_model.load_weights("densenet121_best_model_weights.h5", by_name=True, skip_mismatch=True)
+        full_model.load_weights("densenet121_weights.h5", by_name=True, skip_mismatch=True)
         
         logger.info("✅ FULL model reconstructed successfully!")
         return full_model
