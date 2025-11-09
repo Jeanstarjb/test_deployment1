@@ -252,62 +252,60 @@ if not st.session_state.app_loaded:
 @st.cache_resource
 def load_model():
     try:
-        logger.info("🏗️ Attempting to load complete model...")
+        logger.info("🏗️ Attempting to reconstruct full model...")
         
-        # Try loading as a complete model first
+        # 1. Load DenseNet121 base
+        base_model = tf.keras.applications.DenseNet121(
+            include_top=False, 
+            weights='imagenet', 
+            input_shape=(224, 224, 3)
+        )
+        base_model.trainable = False 
+        
+        # 2. Reconstruct head EXACTLY as in training
+        x = base_model.output
+        x = tf.keras.layers.GlobalAveragePooling2D(name='avg_pool')(x)
+        x = tf.keras.layers.Dropout(0.5)(x)
+        x = tf.keras.layers.Dense(512, activation='relu')(x)
+        x = tf.keras.layers.Dropout(0.5)(x)
+        predictions = tf.keras.layers.Dense(8, activation='sigmoid', name='predictions')(x)
+        
+        # 3. Create model
+        full_model = tf.keras.models.Model(inputs=base_model.input, outputs=predictions)
+        
+        # 4. Compile model BEFORE loading weights (important!)
+        full_model.compile(
+            optimizer='adam',
+            loss='binary_crossentropy',
+            metrics=['accuracy']
+        )
+        
+        # 5. Try loading weights with different strategies
+        logger.info("📦 Attempting to load weights...")
+        
         try:
-            full_model = tf.keras.models.load_model("densenet121_weights.h5", compile=False)
-            logger.info("✅ Loaded as complete model")
-            
-            # Recompile
-            full_model.compile(
-                optimizer='adam',
-                loss='binary_crossentropy',
-                metrics=['accuracy']
-            )
-            
-            logger.info("✅ Model loaded successfully!")
-            return full_model
-            
+            # Strategy 1: Load with by_name and skip_mismatch
+            full_model.load_weights("densenet121_weights.h5", by_name=True, skip_mismatch=True)
+            logger.info("✅ Weights loaded with by_name=True, skip_mismatch=True")
         except Exception as e1:
-            logger.warning(f"⚠️ Not a complete model file: {e1}")
+            logger.warning(f"⚠️ Strategy 1 failed: {e1}")
             
-            # Fall back to reconstruction method
-            logger.info("📦 Trying weight loading method...")
-            
-            base_model = tf.keras.applications.DenseNet121(
-                include_top=False, 
-                weights='imagenet', 
-                input_shape=(224, 224, 3)
-            )
-            base_model.trainable = False 
-            
-            x = base_model.output
-            x = tf.keras.layers.GlobalAveragePooling2D(name='avg_pool')(x)
-            x = tf.keras.layers.Dropout(0.5)(x)
-            x = tf.keras.layers.Dense(512, activation='relu')(x)
-            x = tf.keras.layers.Dropout(0.5)(x)
-            predictions = tf.keras.layers.Dense(8, activation='sigmoid', name='predictions')(x)
-            
-            full_model = tf.keras.models.Model(inputs=base_model.input, outputs=predictions)
-            
-            full_model.compile(
-                optimizer='adam',
-                loss='binary_crossentropy',
-                metrics=['accuracy']
-            )
-            
-            # Load weights
-            full_model.load_weights("densenet121_weights.h5")
-            logger.info("✅ Weights loaded successfully!")
-            
-            return full_model
-            
+            try:
+                # Strategy 2: Load without by_name
+                full_model.load_weights("densenet121_weights.h5")
+                logger.info("✅ Weights loaded directly")
+            except Exception as e2:
+                logger.error(f"❌ Strategy 2 also failed: {e2}")
+                raise Exception(f"All weight loading strategies failed. Last error: {e2}")
+        
+        logger.info("✅ Model reconstruction complete!")
+        return full_model
+        
     except Exception as e:
-        logger.error(f"❌ All loading methods failed: {e}")
+        logger.error(f"❌ Model reconstruction failed: {e}")
         import traceback
         logger.error(traceback.format_exc())
-        st.error(f"Failed to load model. Error: {e}")
+        st.error(f"Failed to reconstruct model. Error: {e}")
         return None
 
 # Initialize model
