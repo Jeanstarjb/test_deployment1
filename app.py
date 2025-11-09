@@ -258,14 +258,6 @@ def load_model():
         full_model = tf.keras.models.load_model('my_ocular_model_densenet121.keras', compile=False)
         logger.info("✅ Model architecture loaded from .keras file!")
         
-        # STEP 2: Load the weights from .h5 file
-        try:
-            full_model.load_weights('densenet121_weights.h5')
-            logger.info("✅ Weights loaded from .h5 file!")
-        except Exception as e:
-            logger.warning(f"⚠️ Could not load separate weights: {e}")
-            logger.info("ℹ️ Using weights from .keras file instead")
-        
         # STEP 3: Compile the model
         full_model.compile(
             optimizer='adam',
@@ -287,7 +279,348 @@ def load_model():
 
 # Initialize model
 model = load_model()
+def inspect_model_layers(model):
+    """
+    Quick inspection of all layers with output shapes
+    """
+    print("="*80)
+    print("MODEL LAYER INSPECTION")
+    print("="*80)
+    
+    conv_layers = []
+    
+    for i, layer in enumerate(model.layers):
+        layer_type = type(layer).__name__
+        layer_name = layer.name
+        
+        try:
+            output_shape = layer.output_shape
+            is_4d = isinstance(output_shape, tuple) and len(output_shape) == 4
+            
+            # Mark convolutional-like layers
+            marker = "🎯 CONV" if is_4d else "   "
+            
+            print(f"{i:3d} {marker} | {layer_name:40s} | {layer_type:25s} | {str(output_shape):30s}")
+            
+            if is_4d:
+                conv_layers.append({
+                    'index': i,
+                    'name': layer_name,
+                    'type': layer_type,
+                    'shape': output_shape
+                })
+                
+        except Exception as e:
+            print(f"{i:3d}     | {layer_name:40s} | {layer_type:25s} | ERROR: {e}")
+    
+    print("="*80)
+    print(f"\n✅ Found {len(conv_layers)} convolutional layers\n")
+    
+    return conv_layers
 
+
+# ================= METHOD 2: FILTER BY LAYER TYPE =================
+
+def find_conv_layers_by_type(model):
+    """
+    Find layers specifically by their type
+    """
+    conv_types = [
+        'Conv1D', 'Conv2D', 'Conv3D',
+        'SeparableConv1D', 'SeparableConv2D',
+        'DepthwiseConv2D',
+        'Conv2DTranspose'
+    ]
+    
+    found_layers = []
+    
+    print("\n" + "="*80)
+    print("CONVOLUTIONAL LAYERS BY TYPE")
+    print("="*80)
+    
+    for layer in model.layers:
+        layer_type = type(layer).__name__
+        
+        if layer_type in conv_types:
+            try:
+                found_layers.append({
+                    'name': layer.name,
+                    'type': layer_type,
+                    'shape': layer.output_shape,
+                    'filters': layer.filters if hasattr(layer, 'filters') else 'N/A',
+                    'kernel_size': layer.kernel_size if hasattr(layer, 'kernel_size') else 'N/A'
+                })
+                print(f"✓ {layer.name:40s} | {layer_type:20s} | {layer.output_shape}")
+            except:
+                pass
+    
+    print("="*80)
+    return found_layers
+
+
+# ================= METHOD 3: FIND BEST LAYER FOR GRAD-CAM =================
+
+def find_best_gradcam_layer(model):
+    """
+    Automatically find the best layer for Grad-CAM
+    (typically the last convolutional layer with 4D output)
+    """
+    print("\n" + "="*80)
+    print("FINDING BEST GRAD-CAM LAYER")
+    print("="*80)
+    
+    best_layer = None
+    best_score = 0
+    candidates = []
+    
+    for i, layer in enumerate(reversed(model.layers)):
+        try:
+            output_shape = layer.output_shape
+            
+            # Check if it's a 4D tensor (batch, height, width, channels)
+            if isinstance(output_shape, tuple) and len(output_shape) == 4:
+                _, h, w, c = output_shape
+                
+                # Score based on spatial resolution and channels
+                # Higher spatial resolution is better for detailed heatmaps
+                score = (h * w) * 0.7 + c * 0.3
+                
+                candidates.append({
+                    'name': layer.name,
+                    'type': type(layer).__name__,
+                    'shape': output_shape,
+                    'score': score,
+                    'spatial': (h, w),
+                    'channels': c
+                })
+                
+                if score > best_score:
+                    best_score = score
+                    best_layer = layer.name
+                    
+                # Stop after finding reasonable options
+                if len(candidates) >= 5:
+                    break
+                    
+        except:
+            continue
+    
+    # Sort by score
+    candidates.sort(key=lambda x: x['score'], reverse=True)
+    
+    print("\nTop 5 Grad-CAM Layer Candidates:")
+    print("-" * 80)
+    for i, cand in enumerate(candidates[:5], 1):
+        marker = "⭐ BEST" if cand['name'] == best_layer else "      "
+        print(f"{i}. {marker} | {cand['name']:40s} | {cand['spatial']} | {cand['channels']:4d} channels | Score: {cand['score']:.1f}")
+    
+    print("="*80)
+    print(f"\n✅ RECOMMENDED: '{best_layer}'\n")
+    
+    return best_layer, candidates
+
+
+# ================= METHOD 4: SEARCH BY NAME PATTERN =================
+
+def search_layers_by_name(model, patterns=['conv', 'block', 'concat', 'bn', 'relu']):
+    """
+    Search for layers matching specific name patterns
+    Useful for finding architecture-specific layers
+    """
+    print("\n" + "="*80)
+    print("SEARCH BY NAME PATTERN")
+    print("="*80)
+    
+    results = {pattern: [] for pattern in patterns}
+    
+    for layer in model.layers:
+        layer_name = layer.name.lower()
+        
+        for pattern in patterns:
+            if pattern in layer_name:
+                try:
+                    results[pattern].append({
+                        'name': layer.name,
+                        'type': type(layer).__name__,
+                        'shape': layer.output_shape
+                    })
+                except:
+                    pass
+    
+    for pattern, layers in results.items():
+        print(f"\n🔍 Pattern '{pattern}': {len(layers)} matches")
+        for layer in layers[-3:]:  # Show last 3
+            print(f"   └─ {layer['name']:40s} | {layer['shape']}")
+    
+    print("="*80)
+    return results
+
+
+# ================= METHOD 5: VISUALIZE MODEL ARCHITECTURE =================
+
+def visualize_model_structure(model, filename='model_structure.png'):
+    """
+    Create a visual diagram of the model
+    """
+    try:
+        tf.keras.utils.plot_model(
+            model,
+            to_file=filename,
+            show_shapes=True,
+            show_layer_names=True,
+            rankdir='TB',  # Top to bottom
+            expand_nested=True,
+            dpi=96
+        )
+        print(f"✅ Model diagram saved to: {filename}")
+        return True
+    except Exception as e:
+        print(f"❌ Could not create diagram: {e}")
+        return False
+
+
+# ================= METHOD 6: ARCHITECTURE-SPECIFIC HELPERS =================
+
+def get_architecture_specific_layers(model):
+    """
+    Get recommended Grad-CAM layers for common architectures
+    """
+    architecture_layers = {
+        'DenseNet121': [
+            'conv5_block16_concat',
+            'conv5_block16_2_conv',
+            'relu'
+        ],
+        'DenseNet169': [
+            'conv5_block32_concat',
+            'conv5_block32_2_conv'
+        ],
+        'DenseNet201': [
+            'conv5_block32_concat',
+            'conv5_block32_2_conv'
+        ],
+        'ResNet50': [
+            'conv5_block3_out',
+            'conv5_block3_3_conv',
+            'activation_49'
+        ],
+        'ResNet101': [
+            'conv5_block3_out',
+            'conv5_block3_3_conv'
+        ],
+        'VGG16': [
+            'block5_conv3',
+            'block5_pool'
+        ],
+        'VGG19': [
+            'block5_conv4',
+            'block5_pool'
+        ],
+        'InceptionV3': [
+            'mixed10',
+            'mixed9'
+        ],
+        'MobileNetV2': [
+            'block_16_project_BN',
+            'Conv_1'
+        ],
+        'EfficientNetB0': [
+            'top_activation',
+            'block7a_project_bn'
+        ]
+    }
+    
+    print("\n" + "="*80)
+    print("ARCHITECTURE-SPECIFIC LAYER DETECTION")
+    print("="*80)
+    
+    detected_arch = None
+    found_layers = []
+    
+    # Try to detect architecture
+    layer_names = [layer.name for layer in model.layers]
+    
+    for arch, candidates in architecture_layers.items():
+        for candidate in candidates:
+            if candidate in layer_names:
+                detected_arch = arch
+                found_layers = candidates
+                break
+        if detected_arch:
+            break
+    
+    if detected_arch:
+        print(f"✅ Detected architecture: {detected_arch}")
+        print(f"\n📋 Recommended Grad-CAM layers for {detected_arch}:")
+        
+        for layer_name in found_layers:
+            exists = "✓" if layer_name in layer_names else "✗"
+            print(f"   {exists} {layer_name}")
+            
+        return detected_arch, [l for l in found_layers if l in layer_names]
+    else:
+        print("⚠️ Architecture not automatically detected")
+        return None, []
+
+
+# ================= COMPLETE ANALYSIS FUNCTION =================
+
+def analyze_model_for_gradcam(model):
+    """
+    Complete analysis - runs all methods
+    """
+    print("\n" + "🔬" * 40)
+    print("COMPLETE GRAD-CAM LAYER ANALYSIS")
+    print("🔬" * 40 + "\n")
+    
+    # Method 1: Inspect all layers
+    all_conv_layers = inspect_model_layers(model)
+    
+    # Method 2: Find by type
+    typed_layers = find_conv_layers_by_type(model)
+    
+    # Method 3: Find best layer
+    best_layer, candidates = find_best_gradcam_layer(model)
+    
+    # Method 4: Search by pattern
+    pattern_results = search_layers_by_name(model)
+    
+    # Method 5: Architecture-specific
+    arch, arch_layers = get_architecture_specific_layers(model)
+    
+    # Summary
+    print("\n" + "="*80)
+    print("📊 SUMMARY & RECOMMENDATIONS")
+    print("="*80)
+    
+    print(f"\n✅ Total Conv Layers Found: {len(all_conv_layers)}")
+    
+    if best_layer:
+        print(f"\n⭐ RECOMMENDED LAYER: '{best_layer}'")
+        print(f"   This is the best layer based on spatial resolution and depth")
+    
+    if arch_layers:
+        print(f"\n🏛️ ARCHITECTURE-SPECIFIC RECOMMENDATIONS ({arch}):")
+        for layer in arch_layers[:3]:
+            print(f"   • {layer}")
+    
+    print("\n💡 USAGE IN CODE:")
+    print("-" * 80)
+    if best_layer:
+        print(f"   last_conv_layer = '{best_layer}'")
+    elif arch_layers:
+        print(f"   last_conv_layer = '{arch_layers[0]}'")
+    elif all_conv_layers:
+        print(f"   last_conv_layer = '{all_conv_layers[-1]['name']}'")
+    print("="*80)
+    
+    return {
+        'best_layer': best_layer,
+        'candidates': candidates,
+        'architecture': arch,
+        'arch_layers': arch_layers,
+        'all_conv_layers': all_conv_layers
+    }
 if model is not None:
     logger.info("=== MODEL LAYERS ===")
     for i, layer in enumerate(model.layers[-10:]):  # Show last 10 layers
