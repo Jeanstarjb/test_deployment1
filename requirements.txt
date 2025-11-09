@@ -7,3 +7,4 @@ pandas==2.2.3
 python-dotenv==1.0.1
 opencv-python==4.8.1.78
 matplotlib>=3.9.0
+opencv-python-headless
