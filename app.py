@@ -542,21 +542,30 @@ def find_last_conv_layer(model):
     logger.warning("❌ No convolutional layer found")
     return None
 
-def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None):
+def make_gradcam_heatmap(img_array, model, last_conv_layer_name=None, pred_index=None):
     """Generate Grad-CAM heatmap for explainability"""
     try:
         # 1. Find the last 4D layer (convolutional-like output) automatically
-        last_conv_layer = None
-        for layer in reversed(model.layers):
-            # Check if layer output is 4D (batch, height, width, channels)
-            if hasattr(layer, 'output_shape') and len(layer.output_shape) == 4:
-                 last_conv_layer = layer
-                 logger.info(f"🔍 Found best Grad-CAM layer: {layer.name} {layer.output_shape}")
-                 break
+        if last_conv_layer_name is None:
+            last_conv_layer = None
+            for layer in reversed(model.layers):
+                # Check if layer output is 4D (batch, height, width, channels)
+                if hasattr(layer, 'output_shape') and len(layer.output_shape) == 4:
+                    last_conv_layer = layer
+                    logger.info(f"🔍 Found best Grad-CAM layer: {layer.name} {layer.output_shape}")
+                    break
 
-        if last_conv_layer is None:
-            logger.error("❌ Could not find any 4D layer for Grad-CAM.")
-            return None
+            if last_conv_layer is None:
+                logger.error("❌ Could not find any 4D layer for Grad-CAM.")
+                return None
+        else:
+            # Use the provided layer name
+            try:
+                last_conv_layer = model.get_layer(last_conv_layer_name)
+                logger.info(f"🔍 Using specified layer: {last_conv_layer_name}")
+            except:
+                logger.error(f"❌ Layer {last_conv_layer_name} not found")
+                return None
 
         # 2. Create grad model
         grad_model = tf.keras.models.Model(
@@ -573,17 +582,25 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None
 
         # 4. Process gradients
         grads = tape.gradient(class_channel, last_conv_layer_output)
+        
+        # Safety check
+        if grads is None:
+            logger.error("❌ Gradients are None - layer may not be trainable")
+            return None
+            
         pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
         last_conv_layer_output = last_conv_layer_output[0]
         heatmap = last_conv_layer_output @ pooled_grads[..., tf.newaxis]
         heatmap = tf.squeeze(heatmap)
 
         # 5. Normalize
-        heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
+        heatmap = tf.maximum(heatmap, 0) / (tf.math.reduce_max(heatmap) + 1e-10)  # Add epsilon to avoid division by zero
         return heatmap.numpy()
 
     except Exception as e:
         logger.error(f"❌ Grad-CAM failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return None
 
 def create_gradcam_overlay(image, heatmap, alpha=0.4):
@@ -621,6 +638,38 @@ def predict_diseases_with_gradcam(image):
     # Try to generate Grad-CAM (optional)
     gradcams = {}
     try:
+        # For DenseNet121, try these common layer names
+        possible_layers = [
+            'conv5_block16_concat',  # DenseNet121 last layer
+            'relu',                   # Last ReLU activation
+            'bn',                     # Last batch norm
+            None                      # Auto-detect
+        ]
+        
+        last_conv_layer = None
+        for layer_name in possible_layers:
+            try:
+                if layer_name is None:
+                    # Auto-detect
+                    for layer in reversed(model.layers):
+                        if hasattr(layer, 'output_shape') and len(layer.output_shape) == 4:
+                            last_conv_layer = layer.name
+                            logger.info(f"✅ Auto-detected layer: {last_conv_layer}")
+                            break
+                else:
+                    model.get_layer(layer_name)
+                    last_conv_layer = layer_name
+                    logger.info(f"✅ Using layer: {last_conv_layer}")
+                    
+                if last_conv_layer:
+                    break
+            except:
+                continue
+        
+        if not last_conv_layer:
+            logger.warning("⚠️ Could not find suitable layer for Grad-CAM")
+            return predictions, None
+
         # Generate Grad-CAMs for top 3 predictions
         top_indices = np.argsort(predictions)[-3:][::-1]
 
@@ -629,8 +678,7 @@ def predict_diseases_with_gradcam(image):
             confidence = predictions[idx]
 
             if confidence > 0.1:  # Only if >10% confidence
-                # Pass None for last_conv_layer_name as it's now auto-detected
-                heatmap = make_gradcam_heatmap(processed, model, None, pred_index=idx)
+                heatmap = make_gradcam_heatmap(processed, model, last_conv_layer, pred_index=idx)
 
                 if heatmap is not None:
                     overlay = create_gradcam_overlay(image, heatmap, alpha=0.5)
@@ -638,11 +686,12 @@ def predict_diseases_with_gradcam(image):
                         'image': overlay,
                         'confidence': confidence
                     }
+                    
     except Exception as e:
-        logger.warning(f"Grad-CAM generation failed: {e}")
+        logger.warning(f"⚠️ Grad-CAM generation failed: {e}")
         gradcams = None
 
-    return predictions, gradcams
+    return predictions, gradcams if gradcams else None
 
 def validate_fundus_image(image):
     """
