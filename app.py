@@ -472,9 +472,11 @@ def validate_fundus_image(image):
     Validate if uploaded image is a fundus photograph using Gemini AI
     Returns: (is_valid: bool, confidence: str, message: str)
     """
+    import json  # Move import to top of function
+    
     if 'gemini_api_key' not in st.session_state or not st.session_state.gemini_api_key:
         # If no Gemini API, skip validation
-        return True, "skipped", "⚠️ Gemini API not configured - validation skipped"
+        return True, "skipped", "⚠ Gemini API not configured - validation skipped"
     
     try:
         # Configure Gemini
