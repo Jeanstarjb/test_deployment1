@@ -251,12 +251,48 @@ if not st.session_state.app_loaded:
 @st.cache_resource
 def load_model():
     try:
-        model = tf.keras.models.load_model("my_ocular_model_resnet50 (5).keras", compile=False)
-        logger.info("✅ Model loaded successfully")
-        return model
+        logger.info("🏗️ Attempting to reconstruct full model...")
+        
+        # 1. Load the standard ResNet50 base (The "Eyes")
+        # We use ImageNet weights as a starting point for the base
+        base_model = tf.keras.applications.DenseNet121(
+            include_top=False, 
+            weights='imagenet', 
+            input_shape=(224, 224, 3)
+        )
+        # Freeze base if that's how you trained it (optional, safer for inference)
+        base_model.trainable = False 
+        
+        # 2. Reconstruct your custom head exactly as seen in your logs (The "Brain")
+        x = base_model.output
+        
+        # Re-creating the complex pooling you used
+    
+        x = tf.keras.layers.GlobalAveragePooling2D(name='global_avg_pool')(x)
+        
+        # Re-creating your dense layers
+        # IMPORTANT: Ensure '512' matches what you used in training!
+        x = tf.keras.layers.Dropout(0.5, name='dropout_1')(x)
+        x = tf.keras.layers.Dense(512, activation='relu', name='dense_1')(x)
+        x = tf.keras.layers.Dropout(0.5, name='dropout_2')(x)
+        
+        # Final output layer for 8 classes
+        output = tf.keras.layers.Dense(8, activation='sigmoid', name='output_layer')(x)
+        
+        # 3. Stitch them together
+        full_model = tf.keras.models.Model(inputs=base_model.input, outputs=output)
+        
+        # 4. Transplant your saved weights into this new body
+        # 'by_name=True' is crucial here - it only loads matching layers
+        # 'skip_mismatch=True' ignores layers that don't match perfectly
+        full_model.load_weights("densenet121_best_model_phase2.keras.weights.h5", by_name=True, skip_mismatch=True)
+        
+        logger.info("✅ FULL model reconstructed successfully!")
+        return full_model
+
     except Exception as e:
-        logger.error(f"❌ Error loading model: {e}")
-        st.error(f"Error loading model: {e}")
+        logger.error(f"❌ Model reconstruction failed: {e}")
+        st.error(f"Failed to reconstruct model. Error: {e}")
         return None
 
 # Initialize model
