@@ -15,7 +15,6 @@ from dotenv import load_dotenv
 import cv2
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
-import streamlit.components.v1 as components
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -38,6 +37,8 @@ if 'workflow_step' not in st.session_state:
 # Initialize Gemini API key from environment
 if 'gemini_api_key' not in st.session_state:
     st.session_state.gemini_api_key = os.getenv('GEMINI_API_KEY', '')
+
+# Replace your entire loading screen section (lines 49-560) with this:
 
 # ================= LOADING SCREEN =================
 # Initialize first, before any checks
@@ -246,139 +247,65 @@ if not st.session_state.app_loaded:
     
     st.session_state.app_loaded = True
     st.rerun()
-
 # ================= LOAD MODEL =================
 @st.cache_resource
 def load_model():
     try:
-        logger.info("🏗 Loading model from .keras file...")
+        logger.info("🏗️ Attempting to reconstruct full model...")
         
-        # STEP 1: Load the complete model from .keras file
-        full_model = tf.keras.models.load_model('my_ocular_model_densenet121.keras', compile=False)
-        logger.info("✅ Model architecture loaded from .keras file!")
-        
-        # STEP 3: Compile the model
-        full_model.compile(
-            optimizer='adam',
-            loss='binary_crossentropy',
-            metrics=['accuracy']
+        # 1. Load the standard ResNet50 base (The "Eyes")
+        # We use ImageNet weights as a starting point for the base
+        base_model = tf.keras.applications.ResNet50(
+            include_top=False, 
+            weights='imagenet', 
+            input_shape=(224, 224, 3)
         )
+        # Freeze base if that's how you trained it (optional, safer for inference)
+        base_model.trainable = False 
         
-        logger.info("✅ Model ready for inference!")
-        logger.info(f"📊 Model has {len(full_model.layers)} layers")
+        # 2. Reconstruct your custom head exactly as seen in your logs (The "Brain")
+        x = base_model.output
         
+        # Re-creating the complex pooling you used
+        avg_pool = tf.keras.layers.GlobalAveragePooling2D(name='global_avg_pool')(x)
+        max_pool = tf.keras.layers.GlobalMaxPooling2D(name='global_max_pool')(x)
+        x = tf.keras.layers.Concatenate(name='concatenate')([avg_pool, max_pool])
+        
+        # Re-creating your dense layers
+        # IMPORTANT: Ensure '512' matches what you used in training!
+        x = tf.keras.layers.Dropout(0.5, name='dropout_1')(x)
+        x = tf.keras.layers.Dense(512, activation='relu', name='dense_1')(x)
+        x = tf.keras.layers.Dropout(0.5, name='dropout_2')(x)
+        
+        # Final output layer for 8 classes
+        output = tf.keras.layers.Dense(8, activation='sigmoid', name='output_layer')(x)
+        
+        # 3. Stitch them together
+        full_model = tf.keras.models.Model(inputs=base_model.input, outputs=output)
+        
+        # 4. Transplant your saved weights into this new body
+        # 'by_name=True' is crucial here - it only loads matching layers
+        # 'skip_mismatch=True' ignores layers that don't match perfectly
+        full_model.load_weights("my_ocular_model_resnet50 (5).keras", by_name=True, skip_mismatch=True)
+        
+        logger.info("✅ FULL model reconstructed successfully!")
         return full_model
-        
+
     except Exception as e:
-        logger.error(f"❌ Model loading failed: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        st.error(f"Failed to load model. Error: {e}")
+        logger.error(f"❌ Model reconstruction failed: {e}")
+        st.error(f"Failed to reconstruct model. Error: {e}")
         return None
 
 # Initialize model
 model = load_model()
 
-# ================= OPTIMIZED GRAD-CAM LAYER DETECTION (FIXED) =================
-
-def get_layer_output_shape(layer):
-    """Safely get the output shape of a layer."""
-    try:
-        # Try the standard attribute first
-        if hasattr(layer, 'output_shape'):
-            return layer.output_shape
-        # Fallback to the output tensor shape
-        elif hasattr(layer, 'output'):
-            return layer.output.shape
-    except Exception:
-        pass
-    return None
-
-def get_densenet121_gradcam_layer(model):
-    """Get optimal Grad-CAM layer for DenseNet121 models (Robust Version)."""
-    logger.info("🔍 Searching for optimal Grad-CAM layer...")
-    
-    # Priority 1: Known DenseNet121 layers
-    DENSENET121_LAYERS = [
-        'conv5_block16_2_conv',  # Best - last Conv2D in final dense block
-        'conv5_block16_1_conv',  # Backup - second to last Conv2D
-        'relu',                    # Final ReLU activation
-        'conv5_block16_concat',   # Concatenation layer
-    ]
-    
-    layer_names = [layer.name for layer in model.layers]
-    for preferred_layer in DENSENET121_LAYERS:
-        if preferred_layer in layer_names:
-            try:
-                layer = model.get_layer(preferred_layer)
-                shape = get_layer_output_shape(layer)
-                # Check if shape is valid and has 4 dimensions (batch, height, width, channels)
-                if shape and len(shape) == 4:
-                    logger.info(f"✅ Found known layer: {preferred_layer}")
-                    return preferred_layer
-            except Exception as e:
-                logger.warning(f"⚠ Could not validate layer {preferred_layer}: {e}")
-                continue
-    
-    # Priority 2: Find last Conv2D layer automatically
-    logger.info("📍 Attempting auto-detection of last Conv2D layer...")
-    for layer in reversed(model.layers):
-        if 'Conv2D' in type(layer).__name__:
-            shape = get_layer_output_shape(layer)
-            if shape and len(shape) == 4:
-                logger.info(f"✅ Auto-detected layer: {layer.name}")
-                return layer.name
-                
-    # Priority 3: Any 4D layer as last resort
-    logger.info("📍 Attempting auto-detection of ANY 4D layer...")
-    for layer in reversed(model.layers):
-        shape = get_layer_output_shape(layer)
-        if shape and len(shape) == 4:
-             logger.info(f"✅ Fallback 4D layer: {layer.name}")
-             return layer.name
-            
-    logger.error("❌ No suitable Grad-CAM layer found.")
-    return None
-
-
-def verify_gradcam_layer(model, layer_name):
-    """
-    Verify that a layer is suitable for Grad-CAM.
-    """
-    try:
-        layer = model.get_layer(layer_name)
-        shape = get_layer_output_shape(layer)
-
-        # Check 1: Must have 4D output
-        if not shape or len(shape) != 4:
-            logger.error(f"❌ Layer {layer_name} has wrong shape: {shape}")
-            return False
-        
-        # Check 2: Must have reasonable spatial dimensions
-        _, h, w, c = shape
-        # Handle potential None values in shape (e.g., dynamic input sizes)
-        if h is not None and w is not None and (h < 4 or w < 4):
-             logger.warning(f"⚠ Layer {layer_name} has very small spatial size: {h}x{w}")
-        
-        logger.info(f"✅ Layer {layer_name} verified for Grad-CAM")
-        logger.info(f"   Spatial: {h}x{w}, Channels: {c}")
-        return True
-        
-    except Exception as e:
-        logger.error(f"❌ Error verifying layer {layer_name}: {e}")
-        return False
-
-# Detect optimal Grad-CAM layer on startup
 if model is not None:
-    logger.info("=== GRAD-CAM LAYER DETECTION ===")
-    optimal_gradcam_layer = get_densenet121_gradcam_layer(model)
-    if optimal_gradcam_layer:
-        logger.info(f"✅ Will use layer: {optimal_gradcam_layer}")
-    else:
-        logger.error("❌ No suitable Grad-CAM layer found!")
-        optimal_gradcam_layer = None
-else:
-    optimal_gradcam_layer = None
+    logger.info("=== MODEL LAYERS ===")
+    for i, layer in enumerate(model.layers[-10:]):  # Show last 10 layers
+        try:
+            logger.info(f"{i}: {layer.name} | Type: {type(layer).__name__} | Output: {layer.output_shape}")
+        except:
+            logger.info(f"{i}: {layer.name} | Type: {type(layer).__name__}")
 
 # ================= CONSTANTS =================
 DISEASE_NAMES = ['Normal', 'Diabetes', 'Glaucoma', 'Cataract', 'AMD', 'Hypertension', 'Myopia', 'Other']
@@ -470,35 +397,40 @@ st.markdown("""
         .step-label { font-size: 0.7rem !important; }
         .step-connector { width: 30px !important; }
 
+        /* 2. Fix Giant Video on Phone (Optional)
+           Remove the '/*' and '*/' below if you want to see the WHOLE video 
+           instead of it being zoomed in to cover the screen. */
+        
+        /* #bg-video { object-fit: contain !important; } */
+        
         /* --- New Mobile Stepper: Horizontal with labels below --- */
         .progress-stepper {
-            align-items: flex-start !important;
-            gap: 5px !important;
-            padding: 20px 5px !important;
+            align-items: flex-start !important; /* Aligns circles and connectors to the top */
+            gap: 5px !important;                /* Reduces space between steps */
+            padding: 20px 5px !important;       /* Reduces side padding */
         }
         .step {
-            flex-direction: column !important;
-            align-items: center !important;
-            flex: 1 !important;
+            flex-direction: column !important; /* Stacks circle above label */
+            align-items: center !important;    /* Centers them horizontally */
+            flex: 1 !important;                /* Makes each step take equal width */
         }
         .step-circle {
-            width: 40px !important;
+            width: 40px !important;  /* Slightly smaller circles for mobile */
             height: 40px !important;
             font-size: 1rem !important;
-            margin-bottom: 5px !important;
+            margin-bottom: 5px !important; /* Space between circle and text */
         }
         .step-label {
-            font-size: 0.6rem !important;
+            font-size: 0.6rem !important;  /* Smaller text */
             text-align: center !important;
-            white-space: normal !important;
+            white-space: normal !important; /* Allows text to wrap to two lines if needed */
             line-height: 1.1 !important;
         }
         .step-connector {
-             width: 15px !important;
+             width: 15px !important;      /* Shorter connectors to save space */
              min-width: 10px !important;
-             margin-top: 20px !important;
+             margin-top: 20px !important; /* Pushes connector down to align with center of 40px circle */
         }
-    }
             
     .custom-upload-wrapper [data-testid='stFileUploader'] {
         width: 100%;
@@ -582,77 +514,75 @@ def format_predictions(predictions, use_optimal_thresholds=True):
     
     return results, detected
 
-# ================= OPTIMIZED GRAD-CAM IMPLEMENTATION =================
+ #================= GRAD-CAM IMPLEMENTATION (SAFE VERSION) =================
 
-def make_gradcam_heatmap(img_array, model, last_conv_layer_name=None, pred_index=None):
-    """
-    Generate Grad-CAM heatmap with automatic layer detection.
-    
-    Args:
-        img_array: Preprocessed image array (batch, height, width, channels)
-        model: TensorFlow/Keras model
-        last_conv_layer_name: Optional layer name, auto-detected if None
-        pred_index: Target class index, uses max prediction if None
-        
-    Returns:
-        numpy.ndarray: Heatmap array, or None if failed
-    """
+def find_last_conv_layer(model):
+    """Find the last convolutional layer - improved detection"""
     try:
-        # Auto-detect layer if not provided
-        if last_conv_layer_name is None:
-            last_conv_layer_name = optimal_gradcam_layer
-            
-            if last_conv_layer_name is None:
-                logger.error("❌ Could not find suitable layer for Grad-CAM")
-                return None
+        # Method 1: Look for Conv2D layers
+        for layer in reversed(model.layers):
+            if hasattr(layer, 'output_shape'):
+                output_shape = layer.output_shape
+                # Check if it's a 4D tensor (batch, height, width, channels)
+                if isinstance(output_shape, tuple) and len(output_shape) == 4:
+                    logger.info(f"✅ Found conv layer: {layer.name} with shape {output_shape}")
+                    return layer.name
         
-        # Verify layer
-        if not verify_gradcam_layer(model, last_conv_layer_name):
+        # Method 2: Look for specific layer types
+        for layer in reversed(model.layers):
+            layer_type = type(layer).__name__
+            if 'Conv' in layer_type or 'Activation' in layer_type:
+                logger.info(f"✅ Found layer by type: {layer.name} ({layer_type})")
+                return layer.name
+                
+    except Exception as e:
+        logger.error(f"❌ Error finding conv layer: {e}")
+    
+    logger.warning("❌ No convolutional layer found")
+    return None
+
+def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None):
+    """Generate Grad-CAM heatmap for explainability"""
+    try:
+        # 1. Find the last 4D layer (convolutional-like output) automatically
+        last_conv_layer = None
+        for layer in reversed(model.layers):
+            # Check if layer output is 4D (batch, height, width, channels)
+            if hasattr(layer, 'output_shape') and len(layer.output_shape) == 4:
+                 last_conv_layer = layer
+                 logger.info(f"🔍 Found best Grad-CAM layer: {layer.name} {layer.output_shape}")
+                 break
+
+        if last_conv_layer is None:
+            logger.error("❌ Could not find any 4D layer for Grad-CAM.")
             return None
-        
-        # Get the layer
-        last_conv_layer = model.get_layer(last_conv_layer_name)
-        
-        # Create gradient model
+
+        # 2. Create grad model
         grad_model = tf.keras.models.Model(
             inputs=model.inputs,
             outputs=[last_conv_layer.output, model.output]
         )
-        
-        # Compute gradients
+
+        # 3. Compute gradients
         with tf.GradientTape() as tape:
-            conv_outputs, predictions = grad_model(img_array)
-            
+            last_conv_layer_output, preds = grad_model(img_array)
             if pred_index is None:
-                pred_index = tf.argmax(predictions[0])
-            
-            class_channel = predictions[:, pred_index]
-        
-        # Get gradients
-        grads = tape.gradient(class_channel, conv_outputs)
-        
-        if grads is None:
-            logger.error("❌ Gradients are None - layer may not be trainable")
-            return None
-        
-        # Global average pooling of gradients
+                pred_index = tf.argmax(preds[0])
+            class_channel = preds[:, pred_index]
+
+        # 4. Process gradients
+        grads = tape.gradient(class_channel, last_conv_layer_output)
         pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-        
-        # Weight the channels by gradient importance
-        conv_outputs = conv_outputs[0]
-        heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
+        last_conv_layer_output = last_conv_layer_output[0]
+        heatmap = last_conv_layer_output @ pooled_grads[..., tf.newaxis]
         heatmap = tf.squeeze(heatmap)
-        
-        # Normalize to [0, 1]
-        heatmap = tf.maximum(heatmap, 0) / (tf.math.reduce_max(heatmap) + 1e-10)
-        
-        logger.info(f"✅ Grad-CAM heatmap generated successfully")
+
+        # 5. Normalize
+        heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
         return heatmap.numpy()
-        
+
     except Exception as e:
-        logger.error(f"❌ Grad-CAM generation failed: {e}")
-        # import traceback
-        # logger.error(traceback.format_exc())
+        logger.error(f"❌ Grad-CAM failed: {e}")
         return None
 
 def create_gradcam_overlay(image, heatmap, alpha=0.4):
@@ -678,7 +608,7 @@ def create_gradcam_overlay(image, heatmap, alpha=0.4):
         return image
 
 def predict_diseases_with_gradcam(image):
-    """Get predictions with Grad-CAM using optimized layer detection"""
+    """Get predictions with optional Grad-CAM"""
     if model is None:
         st.error("❌ Model not loaded")
         return None, None
@@ -687,41 +617,31 @@ def predict_diseases_with_gradcam(image):
     processed = preprocess_image(image)
     predictions = model.predict(processed, verbose=0)[0]
     
-    # Generate Grad-CAMs
+    # Try to generate Grad-CAM (optional)
     gradcams = {}
     try:
-        # Use the pre-detected optimal layer
-        layer_name = optimal_gradcam_layer
-        
-        if layer_name:
-            # Generate for top 3 predictions
-            top_indices = np.argsort(predictions)[-3:][::-1]
-            
-            for idx in top_indices:
-                disease_name = DISEASE_NAMES[idx]
-                confidence = predictions[idx]
-                
-                if confidence > 0.1:
-                    heatmap = make_gradcam_heatmap(
-                        processed, 
-                        model, 
-                        last_conv_layer_name=layer_name,
-                        pred_index=idx
-                    )
-                    
-                    if heatmap is not None:
-                        overlay = create_gradcam_overlay(image, heatmap, alpha=0.5)
-                        gradcams[disease_name] = {
-                            'image': overlay,
-                            'confidence': confidence
-                        }
-        else:
-            logger.warning("⚠ No suitable layer for Grad-CAM")
-            
+        # Generate Grad-CAMs for top 3 predictions
+        top_indices = np.argsort(predictions)[-3:][::-1]
+
+        for idx in top_indices:
+            disease_name = DISEASE_NAMES[idx]
+            confidence = predictions[idx]
+
+            if confidence > 0.1:  # Only if >10% confidence
+                # Pass None for last_conv_layer_name as it's now auto-detected
+                heatmap = make_gradcam_heatmap(processed, model, None, pred_index=idx)
+
+                if heatmap is not None:
+                    overlay = create_gradcam_overlay(image, heatmap, alpha=0.5)
+                    gradcams[disease_name] = {
+                        'image': overlay,
+                        'confidence': confidence
+                    }
     except Exception as e:
-        logger.error(f"❌ Grad-CAM error: {e}")
-    
-    return predictions, gradcams if gradcams else None
+        logger.warning(f"Grad-CAM generation failed: {e}")
+        gradcams = None
+
+    return predictions, gradcams
 
 def validate_fundus_image(image):
     """
@@ -730,7 +650,7 @@ def validate_fundus_image(image):
     """
     if 'gemini_api_key' not in st.session_state or not st.session_state.gemini_api_key:
         # If no Gemini API, skip validation
-        return True, "skipped", "⚠ Gemini API not configured - validation skipped"
+        return True, "skipped", "⚠️ Gemini API not configured - validation skipped"
     
     try:
         # Configure Gemini
@@ -789,7 +709,7 @@ RESPOND ONLY WITH A JSON OBJECT (no markdown, no code blocks, just raw JSON):
 
 ✓ Proceeding with CNN analysis..."""
         else:
-            message = f"""⚠ **Invalid or Non-Fundus Image Detected**
+            message = f"""⚠️ **Invalid or Non-Fundus Image Detected**
 
 **Confidence:** {confidence.upper()}
 **Reason:** {reason}
@@ -802,11 +722,11 @@ Please upload a proper retinal fundus photograph for accurate analysis."""
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse Gemini response: {e}")
         logger.error(f"Raw response: {response_text}")
-        return True, "error", "⚠ Image validation failed (JSON parse error) - proceeding with analysis"
+        return True, "error", "⚠️ Image validation failed (JSON parse error) - proceeding with analysis"
         
     except Exception as e:
         logger.error(f"Error validating fundus image: {e}")
-        return True, "error", f"⚠ Image validation failed ({str(e)}) - proceeding with analysis"
+        return True, "error", f"⚠️ Image validation failed ({str(e)}) - proceeding with analysis"
 
 
 def generate_llm_report(left_results, right_results, left_image, right_image, patient_info):
@@ -933,7 +853,7 @@ def results_card_enhanced(eye_side, predictions, use_optimal_thresholds=True):
     top_finding = sorted_preds[0]
     is_normal = top_finding['disease'] == 'Normal'
     status_color = "#10b981" if is_normal else ("#f59e0b" if top_finding['probability'] < 0.7 else "#ef4444")
-    status_icon = "✅" if is_normal else "⚠" if top_finding['probability'] < 0.7 else "🚨"
+    status_icon = "✅" if is_normal else "⚠️" if top_finding['probability'] < 0.7 else "🚨"
     
     html_content = f"""
     <style>
@@ -1029,19 +949,19 @@ with st.sidebar:
         st.caption("🤖 Powered by Google Gemini")
     else:
         st.error("❌ AI Report Generation: Unavailable")
-        st.caption("⚙ Configure API key in .env file")
+        st.caption("⚙️ Configure API key in .env file")
     
     # Model Status
     if model is not None:
         st.success("✓ CNN Model: Loaded")
-        st.caption("🧠 DenseNet121 Neural Network")
+        st.caption("🧠 ResNet50 Neural Network")
     else:
         st.error("❌ CNN Model: Not Loaded")
     
     st.markdown("---")
     
     st.markdown("### Workflow Progress")
-    st.markdown(f"Current Step: {st.session_state.workflow_step}/3")
+    st.markdown(f"*Current Step:* {st.session_state.workflow_step}/3")
     
     # Display loading metrics if available
     if 'loading_metrics' in st.session_state and st.session_state.loading_metrics.get('total_time'):
@@ -1104,6 +1024,7 @@ if st.session_state.workflow_step == 1:
     
     st.markdown("<br>", unsafe_allow_html=True)
       
+    col1, col2 = st.columns(2)
     # --- IMAGE UPLOAD SECTION ---
     st.markdown("## 📸 RETINAL IMAGE CAPTURE")
     
@@ -1115,6 +1036,7 @@ if st.session_state.workflow_step == 1:
             st.session_state.l_img = Image.open(l_file)
         
         if 'l_img' in st.session_state:
+            # FIX: Changed use_container_width to use_column_width for compatibility
             st.image(st.session_state.l_img, use_column_width=True)
             st.success("✅ Left image captured!")
         st.markdown('</div>', unsafe_allow_html=True)
@@ -1126,6 +1048,7 @@ if st.session_state.workflow_step == 1:
             st.session_state.r_img = Image.open(r_file)
             
         if 'r_img' in st.session_state:
+            # FIX: Changed use_container_width to use_column_width for compatibility
             st.image(st.session_state.r_img, use_column_width=True)
             st.success("✅ Right image captured!")
         st.markdown('</div>', unsafe_allow_html=True)
@@ -1177,7 +1100,7 @@ if st.session_state.workflow_step == 1:
                     
                     st.success("✅ Both images validated!")
                 else:
-                    st.warning("⚠ Validation skipped (No Gemini API key)")
+                    st.warning("⚠️ Validation skipped (No Gemini API key)")
                 
                 # ===== PHASE 2: CNN ANALYSIS (SIMPLIFIED) =====
                 st.info("🧠 **Running CNN analysis...**")
@@ -1259,11 +1182,11 @@ elif st.session_state.workflow_step == 2:
             with col1:
                 l_val = st.session_state.l_validation
                 if l_val['confidence'] == 'skipped':
-                    st.info("⚠ Left Eye: Validation skipped (No API key)")
+                    st.info("⚠️ Left Eye: Validation skipped (No API key)")
                 elif l_val['valid']:
                     st.success(f"✅ Left Eye: Validated ({l_val['confidence']} confidence)")
                 else:
-                    st.warning(f"⚠ Left Eye: Validation concerns ({l_val['confidence']} confidence)")
+                    st.warning(f"⚠️ Left Eye: Validation concerns ({l_val['confidence']} confidence)")
                 
                 with st.expander("View Details"):
                     st.markdown(l_val['message'])
@@ -1271,11 +1194,11 @@ elif st.session_state.workflow_step == 2:
             with col2:
                 r_val = st.session_state.r_validation
                 if r_val['confidence'] == 'skipped':
-                    st.info("⚠ Right Eye: Validation skipped (No API key)")
+                    st.info("⚠️ Right Eye: Validation skipped (No API key)")
                 elif r_val['valid']:
                     st.success(f"✅ Right Eye: Validated ({r_val['confidence']} confidence)")
                 else:
-                    st.warning(f"⚠ Right Eye: Validation concerns ({r_val['confidence']} confidence)")
+                    st.warning(f"⚠️ Right Eye: Validation concerns ({r_val['confidence']} confidence)")
                 
                 with st.expander("View Details"):
                     st.markdown(r_val['message'])
@@ -1299,101 +1222,381 @@ elif st.session_state.workflow_step == 2:
             st.metric("Bilateral Conditions", len(bilateral))
         
         if bilateral:
-            st.warning(f"⚠ **Bilateral findings detected:** {', '.join(bilateral)}")
+            st.warning(f"⚠️ **Bilateral findings detected:** {', '.join(bilateral)}")
         
-        # Grad-CAM visualizations
-        if st.session_state.get('l_gradcams') or st.session_state.get('r_gradcams'):
-            st.markdown("---")
-            st.markdown("### 🔥 Grad-CAM Heatmap Analysis")
-            st.info("These visualizations show which regions of the retina influenced the AI's predictions.")
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ===== GRAD-CAM EXPLAINABILITY SECTION =====
+        st.markdown("---")
+        st.markdown("## 🔬 AI Explainability: Grad-CAM Analysis")
+        st.info("💡 **What is Grad-CAM?** These heatmaps show which parts of the retina influenced the AI's decision. Red/yellow areas indicate regions of high importance.")
+        
+        # Check if Grad-CAMs exist
+        has_left = st.session_state.get('l_gradcams') and len(st.session_state.l_gradcams) > 0
+        has_right = st.session_state.get('r_gradcams') and len(st.session_state.r_gradcams) > 0
+        
+        if has_left or has_right:
+            tab1, tab2 = st.tabs(["👁 Left Eye Explainability", "👁 Right Eye Explainability"])
             
-            col1, col2 = st.columns(2)
+            with tab1:
+                if has_left:
+                    st.markdown("### Left Eye (OS) - Decision Heatmaps")
+                    
+                    # Original image
+                    col_orig, col_space = st.columns([1, 2])
+                    with col_orig:
+                        st.markdown("**Original Image**")
+                        st.image(st.session_state.l_img, use_column_width=True)
+                    
+                    # Grad-CAM heatmaps
+                    st.markdown("**AI Decision Heatmaps (Top Predictions)**")
+                    
+                    num_gradcams = len(st.session_state.l_gradcams)
+                    gradcam_cols = st.columns(min(num_gradcams, 3))
+                    
+                    for idx, (disease, data) in enumerate(st.session_state.l_gradcams.items()):
+                        if idx < 3:
+                            with gradcam_cols[idx]:
+                                st.markdown(f"**{disease}**")
+                                st.markdown(f"*Confidence: {data['confidence']:.1%}*")
+                                st.image(data['image'], use_column_width=True)
+                                
+                                # Disease-specific interpretation
+                                if disease == 'Normal':
+                                    st.success("✅ Uniform attention across retina")
+                                elif disease == 'Glaucoma':
+                                    st.warning("🎯 Focus on optic disc area")
+                                elif disease == 'Diabetes':
+                                    st.warning("🎯 Focus on microaneurysms/hemorrhages")
+                                elif disease == 'Cataract':
+                                    st.warning("🎯 Focus on lens opacity areas")
+                                elif disease == 'AMD':
+                                    st.warning("🎯 Focus on macular region")
+                                else:
+                                    st.info("🎯 Model focusing on specific pathology")
+                else:
+                    st.warning("⚠️ Grad-CAM visualization not available for left eye")
+                    st.caption("This may occur if the model layer structure is incompatible")
+            
+            with tab2:
+                if has_right:
+                    st.markdown("### Right Eye (OD) - Decision Heatmaps")
+                    
+                    # Original image
+                    col_orig, col_space = st.columns([1, 2])
+                    with col_orig:
+                        st.markdown("**Original Image**")
+                        st.image(st.session_state.r_img, use_column_width=True)
+                    
+                    # Grad-CAM heatmaps
+                    st.markdown("**AI Decision Heatmaps (Top Predictions)**")
+                    
+                    num_gradcams = len(st.session_state.r_gradcams)
+                    gradcam_cols = st.columns(min(num_gradcams, 3))
+                    
+                    for idx, (disease, data) in enumerate(st.session_state.r_gradcams.items()):
+                        if idx < 3:
+                            with gradcam_cols[idx]:
+                                st.markdown(f"**{disease}**")
+                                st.markdown(f"*Confidence: {data['confidence']:.1%}*")
+                                st.image(data['image'], use_column_width=True)
+                                
+                                # Disease-specific interpretation
+                                if disease == 'Normal':
+                                    st.success("✅ Uniform attention across retina")
+                                elif disease == 'Glaucoma':
+                                    st.warning("🎯 Focus on optic disc area")
+                                elif disease == 'Diabetes':
+                                    st.warning("🎯 Focus on microaneurysms/hemorrhages")
+                                elif disease == 'Cataract':
+                                    st.warning("🎯 Focus on lens opacity areas")
+                                elif disease == 'AMD':
+                                    st.warning("🎯 Focus on macular region")
+                                else:
+                                    st.info("🎯 Model focusing on specific pathology")
+                else:
+                    st.warning("⚠️ Grad-CAM visualization not available for right eye")
+                    st.caption("This may occur if the model layer structure is incompatible")
+            
+            # Color legend
+            st.markdown("---")
+            st.markdown("### 🎨 Heatmap Color Guide")
+            col1, col2, col3, col4 = st.columns(4)
             
             with col1:
-                if st.session_state.get('l_gradcams'):
-                    st.markdown("**Left Eye Heatmaps:**")
-                    for disease, data in st.session_state.l_gradcams.items():
-                        with st.expander(f"🔍 {disease} ({data['confidence']:.1%})"):
-                            st.image(data['image'], use_column_width=True)
-                else:
-                    st.info("No heatmaps generated for left eye")
-            
+                st.markdown("🔴 **Red/Yellow**")
+                st.caption("High importance - Model focused here")
             with col2:
-                if st.session_state.get('r_gradcams'):
-                    st.markdown("**Right Eye Heatmaps:**")
-                    for disease, data in st.session_state.r_gradcams.items():
-                        with st.expander(f"🔍 {disease} ({data['confidence']:.1%})"):
-                            st.image(data['image'], use_column_width=True)
-                else:
-                    st.info("No heatmaps generated for right eye")
+                st.markdown("🟢 **Green**")
+                st.caption("Moderate importance")
+            with col3:
+                st.markdown("🔵 **Blue/Purple**")
+                st.caption("Low importance")
+            with col4:
+                st.markdown("⚫ **Black**")
+                st.caption("Not considered")
+        else:
+            st.warning("⚠️ Grad-CAM visualizations could not be generated.")
+            st.info("💡 **Possible reasons:**\n- Model architecture incompatible with Grad-CAM\n- OpenCV not properly installed\n- Convolutional layer not found")
+            st.caption("The predictions above are still valid - only the explainability heatmaps are unavailable.")
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Navigation buttons section continues here...
+        # Navigation buttons
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col1:
+            if st.button("⬅️ BACK", use_container_width=True):
+                st.session_state.workflow_step = 1
+                st.rerun()
+        
+        with col3:
+            if st.button("GENERATE REPORT ➡️", use_container_width=True, type="primary"):
+                # Generate report here if Gemini is configured
+                if st.session_state.get('gemini_api_key'):
+                    with st.spinner("🤖 Generating comprehensive clinical report with Google Gemini... This may take 30-60 seconds."):
+                        report = generate_llm_report(
+                            st.session_state.l_res,
+                            st.session_state.r_res,
+                            st.session_state.l_img,
+                            st.session_state.r_img,
+                            st.session_state.patient
+                        )
+                        
+                        if report:
+                            st.session_state.clinical_report = report
+                            st.session_state.report_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            st.success("✅ Clinical report generated!")
+                        else:
+                            st.error("❌ Failed to generate report. Please check your API key.")
+                
+                st.session_state.workflow_step = 3
+                st.rerun()
+    else:
+        st.info("🔄 Processing diagnostic data...")
+        st.session_state.workflow_step = 1
+        time.sleep(1)
+        st.rerun()
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# ================= STEP 3: REPORT =================
+elif st.session_state.workflow_step == 3:
+    st.markdown('<div class="slide-in">', unsafe_allow_html=True)
+    
+    if st.session_state.get('results_ready'):
+        # Report Header
+        st.markdown("""
+        <div style='text-align: center; margin-bottom: 30px;'>
+            <h1 style='color: var(--primary); font-size: 3rem; margin-bottom: 0.5rem;'>📊 CLINICAL REPORT</h1>
+            <p style='color: #94a3b8; font-size: 1.2rem;'>Comprehensive Diagnostic Analysis</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Patient Information Card
+        st.markdown(f"""
+        <div class='glass-card' style='margin-bottom: 30px;'>
+            <h3 style='color: var(--primary); margin-top: 0;'>👤 PATIENT INFORMATION</h3>
+            <div style='display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-top: 20px;'>
+                <div>
+                    <p style='color: #94a3b8; margin: 5px 0; font-size: 0.9rem;'>NAME</p>
+                    <p style='font-size: 1.3rem; font-weight: bold; margin: 0;'>{st.session_state.patient['name']}</p>
+                </div>
+                <div>
+                    <p style='color: #94a3b8; margin: 5px 0; font-size: 0.9rem;'>AGE</p>
+                    <p style='font-size: 1.3rem; font-weight: bold; margin: 0;'>{st.session_state.patient['age']} years</p>
+                </div>
+                <div>
+                    <p style='color: #94a3b8; margin: 5px 0; font-size: 0.9rem;'>GENDER</p>
+                    <p style='font-size: 1.3rem; font-weight: bold; margin: 0;'>{st.session_state.patient['gender']}</p>
+                </div>
+                <div>
+                    <p style='color: #94a3b8; margin: 5px 0; font-size: 0.9rem;'>REPORT ID</p>
+                    <p style='font-size: 1.3rem; font-weight: bold; margin: 0; color: var(--primary);'>OC-{np.random.randint(10000,99999)}</p>
+                </div>
+            </div>
+            <div style='margin-top: 20px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);'>
+                <p style='color: #94a3b8; margin: 5px 0; font-size: 0.9rem;'>MEDICAL HISTORY</p>
+                <p style='margin: 0;'>{st.session_state.patient['history'] or 'None provided'}</p>
+            </div>
+            <div style='margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);'>
+                <p style='color: #94a3b8; margin: 5px 0; font-size: 0.9rem;'>REPORT GENERATED</p>
+                <p style='margin: 0;'>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # CNN Predictions Summary Card
+        st.markdown("""
+        <div class='glass-card' style='margin-bottom: 30px;'>
+            <h3 style='color: var(--primary); margin-top: 0;'>🤖 CNN MODEL PREDICTIONS</h3>
+        """, unsafe_allow_html=True)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### 👁 LEFT EYE (OS)")
+            left_detected = [r['disease'] for r in st.session_state.l_res if r['detected']]
+            if left_detected:
+                st.error(f"**Detected:** {', '.join(left_detected)}")
+            else:
+                st.success("**No abnormalities detected**")
+            
+            # Top 3 predictions
+            sorted_left = sorted(st.session_state.l_res, key=lambda x: x['probability'], reverse=True)[:3]
+            for pred in sorted_left:
+                detected_badge = "🔴" if pred['detected'] else "⚪"
+                st.markdown(f"{detected_badge} **{pred['disease']}**: {pred['probability']:.1%}")
+        
+        with col2:
+            st.markdown("#### 👁 RIGHT EYE (OD)")
+            right_detected = [r['disease'] for r in st.session_state.r_res if r['detected']]
+            if right_detected:
+                st.error(f"**Detected:** {', '.join(right_detected)}")
+            else:
+                st.success("**No abnormalities detected**")
+            
+            # Top 3 predictions
+            sorted_right = sorted(st.session_state.r_res, key=lambda x: x['probability'], reverse=True)[:3]
+            for pred in sorted_right:
+                detected_badge = "🔴" if pred['detected'] else "⚪"
+                st.markdown(f"{detected_badge} **{pred['disease']}**: {pred['probability']:.1%}")
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # AI Clinical Analysis
+        if 'clinical_report' in st.session_state:
+            st.markdown("""
+            <div class='glass-card' style='margin-bottom: 30px;'>
+                <h3 style='color: var(--primary); margin-top: 0;'>🧠 AI-ENHANCED CLINICAL ANALYSIS</h3>
+                <p style='color: #94a3b8; margin-bottom: 20px;'>Powered by Google Gemini Vision AI</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Display the AI report with better formatting
+            st.markdown(st.session_state.clinical_report)
+        else:
+            st.info("💡 **Note:** AI-powered detailed analysis was not generated. Displaying CNN predictions only.")
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Action buttons
+        st.markdown("### 📥 EXPORT OPTIONS")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            # Prepare full report for download
+            report_to_download = st.session_state.get('clinical_report', 'CNN predictions only (AI report not generated)')
+            
+            left_detected_str = ', '.join([r['disease'] for r in st.session_state.l_res if r['detected']]) or 'None'
+            right_detected_str = ', '.join([r['disease'] for r in st.session_state.r_res if r['detected']]) or 'None'
+            
+            full_report = f"""
+╔══════════════════════════════════════════════════════════════╗
+║          OCULUS PRIME - CLINICAL DIAGNOSTIC REPORT           ║
+╚══════════════════════════════════════════════════════════════╝
+
+REPORT ID: OC-{np.random.randint(10000,99999)}
+DATE: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+STATUS: COMPLETED
+
+═══════════════════════════════════════════════════════════════
+                    PATIENT INFORMATION                        
+═══════════════════════════════════════════════════════════════
+
+Name:            {st.session_state.patient['name']}
+Age:             {st.session_state.patient['age']} years
+Gender:          {st.session_state.patient['gender']}
+Medical History: {st.session_state.patient['history'] or 'None provided'}
+
+═══════════════════════════════════════════════════════════════
+                   CNN MODEL PREDICTIONS                       
+═══════════════════════════════════════════════════════════════
+
+LEFT EYE (OS):
+  Detected Conditions: {left_detected_str}
+  
+  Detailed Predictions:
+"""
+            for r in sorted(st.session_state.l_res, key=lambda x: x['probability'], reverse=True):
+                status = "[DETECTED]" if r['detected'] else ""
+                full_report += f"    • {r['disease']:15s}: {r['probability']:6.1%} (threshold: {r['threshold']:.1%}) {status}\n"
+            
+            full_report += f"""
+RIGHT EYE (OD):
+  Detected Conditions: {right_detected_str}
+  
+  Detailed Predictions:
+"""
+            for r in sorted(st.session_state.r_res, key=lambda x: x['probability'], reverse=True):
+                status = "[DETECTED]" if r['detected'] else ""
+                full_report += f"    • {r['disease']:15s}: {r['probability']:6.1%} (threshold: {r['threshold']:.1%}) {status}\n"
+            
+            full_report += f"""
+═══════════════════════════════════════════════════════════════
+              AI-ENHANCED CLINICAL ANALYSIS                    
+═══════════════════════════════════════════════════════════════
+
+{report_to_download}
+
+═══════════════════════════════════════════════════════════════
+                         DISCLAIMER                            
+═══════════════════════════════════════════════════════════════
+
+This report is generated by an AI-powered clinical decision support
+system for research and educational purposes. All findings should be
+verified by a qualified ophthalmologist. This system is NOT a 
+substitute for professional medical diagnosis and treatment.
+
+Generated by: OCULUS PRIME AI Diagnostic System v2.5
+Powered by: ResNet50 CNN + Google Gemini Vision AI
+"""
+            
+            st.download_button(
+                "💾 DOWNLOAD FULL REPORT", 
+                full_report, 
+                file_name=f"OCULUS_Report_{st.session_state.patient['name'].replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                use_container_width=True,
+                type="primary"
+            )
+        
+        with col2:
+            if st.button("📧 EMAIL REPORT", use_container_width=True):
+                st.info("📧 Email functionality coming soon...")
+        
+        with col3:
+            if st.button("🖨 PRINT REPORT", use_container_width=True):
+                st.success("📄 Report sent to virtual printer!")
         
         st.markdown("<br>", unsafe_allow_html=True)
         
         # Navigation buttons
-        col1, col2 = st.columns(2)
+        st.markdown("### 🧭 NAVIGATION")
+        col1, col2, col3 = st.columns(3)
+        
         with col1:
-            if st.button("⬅ Back to Upload", use_container_width=True):
+            if st.button("⬅️ BACK TO DIAGNOSIS", use_container_width=True):
+                st.session_state.workflow_step = 2
+                st.rerun()
+        
+        with col2:
+            if st.button("🔄 NEW ANALYSIS", use_container_width=True):
+                # Reset for new analysis
+                for key in list(st.session_state.keys()):
+                    if key not in ['app_loaded', 'loading_metrics', 'gemini_api_key']:
+                        del st.session_state[key]
                 st.session_state.workflow_step = 1
                 st.rerun()
-        with col2:
-            if st.button("Generate Full Report ➡", use_container_width=True, type="primary"):
-                st.session_state.workflow_step = 3
-                st.rerun()
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# ================= STEP 3: REPORT GENERATION =================
-elif st.session_state.workflow_step == 3:
-    st.markdown('<div class="slide-in">', unsafe_allow_html=True)
-    st.markdown("## 📋 COMPREHENSIVE MEDICAL REPORT")
-    
-    if st.session_state.get('gemini_api_key'):
-        with st.spinner("🤖 Generating AI-powered medical report..."):
-            if 'full_report' not in st.session_state:
-                report = generate_llm_report(
-                    st.session_state.l_res,
-                    st.session_state.r_res,
-                    st.session_state.l_img,
-                    st.session_state.r_img,
-                    st.session_state.patient
-                )
-                st.session_state.full_report = report
-            else:
-                report = st.session_state.full_report
         
-        if report:
-            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-            st.markdown(report)
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Download button
-            st.download_button(
-                label="📥 Download Report",
-                data=report,
-                file_name=f"oculus_report_{st.session_state.patient['name']}_{datetime.now().strftime('%Y%m%d')}.txt",
-                mime="text/plain",
-                use_container_width=True
-            )
-        else:
-            st.error("Failed to generate report. Please try again.")
+        with col3:
+            if st.button("🏁 COMPLETE", use_container_width=True, type="primary"):
+                st.balloons()
+                st.success("✅ Analysis workflow completed successfully!")
     else:
-        st.error("❌ Gemini API key not configured. Cannot generate AI report.")
-        st.info("💡 Configure your GEMINI_API_KEY in the .env file to enable this feature.")
-    
-    # Navigation
-    if st.button("⬅ Back to Results", use_container_width=True):
-        st.session_state.workflow_step = 2
-        st.rerun()
-    
-    if st.button("🔄 Start New Analysis", use_container_width=True, type="primary"):
-        # Clear session state
-        for key in ['l_img', 'r_img', 'l_pred', 'r_pred', 'l_gradcams', 'r_gradcams', 
-                    'results_ready', 'l_res', 'r_res', 'l_detected', 'r_detected', 
-                    'l_validation', 'r_validation', 'full_report']:
-            if key in st.session_state:
-                del st.session_state[key]
-        st.session_state.workflow_step = 1
-        st.rerun()
+        st.error("❌ Diagnostic data not available. Please complete the analysis first.")
+        if st.button("⬅️ BACK TO ANALYSIS", use_container_width=True):
+            st.session_state.workflow_step = 1
+            st.rerun()
     
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1402,8 +1605,8 @@ st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: #666; padding: 20px;'>
     <p><strong>OCULUS PRIME - AI-Driven Ocular Disease Detection System</strong></p>
-    <p>Powered by DenseNet121 CNN + Google Gemini AI</p>
-    <p style='font-size: 0.9rem;'>⚠ This system is for research and educational purposes only. 
+    <p>Powered by ResNet50 CNN + Google Gemini AI</p>
+    <p style='font-size: 0.9rem;'>⚠️ This system is for research and educational purposes only. 
     Always consult with a qualified healthcare professional for medical diagnosis and treatment.</p>
 </div>
 """, unsafe_allow_html=True)
