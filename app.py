@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 import cv2
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
+import streamlit.components.v1 as components
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -278,112 +279,86 @@ def load_model():
 # Initialize model
 model = load_model()
 
-# ================= OPTIMIZED GRAD-CAM LAYER DETECTION =================
+# ================= OPTIMIZED GRAD-CAM LAYER DETECTION (FIXED) =================
+
+def get_layer_output_shape(layer):
+    """Safely get the output shape of a layer."""
+    try:
+        # Try the standard attribute first
+        if hasattr(layer, 'output_shape'):
+            return layer.output_shape
+        # Fallback to the output tensor shape
+        elif hasattr(layer, 'output'):
+            return layer.output.shape
+    except Exception:
+        pass
+    return None
 
 def get_densenet121_gradcam_layer(model):
-    """
-    Get the optimal Grad-CAM layer for DenseNet121 models.
+    """Get optimal Grad-CAM layer for DenseNet121 models (Robust Version)."""
+    logger.info("🔍 Searching for optimal Grad-CAM layer...")
     
-    Returns the name of the best convolutional layer for Grad-CAM visualization.
-    This function checks in order of preference:
-    1. Architecture-specific known layers
-    2. Last Conv2D layer with 4D output
-    3. Fallback to any 4D layer
-    
-    Args:
-        model: TensorFlow/Keras model
-        
-    Returns:
-        str: Layer name suitable for Grad-CAM, or None if not found
-    """
-    
-    # Priority 1: Known DenseNet121 layers (in order of preference)
+    # Priority 1: Known DenseNet121 layers
     DENSENET121_LAYERS = [
         'conv5_block16_2_conv',  # Best - last Conv2D in final dense block
         'conv5_block16_1_conv',  # Backup - second to last Conv2D
-        'relu',                   # Final ReLU activation
-        'conv5_block16_concat',   # Concatenation layer (less ideal but works)
+        'relu',                    # Final ReLU activation
+        'conv5_block16_concat',   # Concatenation layer
     ]
     
-    logger.info("🔍 Searching for optimal Grad-CAM layer for DenseNet121...")
-    
-    # Try known layers first
     layer_names = [layer.name for layer in model.layers]
-    
     for preferred_layer in DENSENET121_LAYERS:
         if preferred_layer in layer_names:
             try:
                 layer = model.get_layer(preferred_layer)
-                if len(layer.output_shape) == 4:  # Verify it's 4D
-                    logger.info(f"✅ Found DenseNet121 layer: {preferred_layer}")
-                    logger.info(f"   Output shape: {layer.output_shape}")
+                shape = get_layer_output_shape(layer)
+                # Check if shape is valid and has 4 dimensions (batch, height, width, channels)
+                if shape and len(shape) == 4:
+                    logger.info(f"✅ Found known layer: {preferred_layer}")
                     return preferred_layer
             except Exception as e:
-                logger.warning(f"⚠ Layer {preferred_layer} found but invalid: {e}")
+                logger.warning(f"⚠ Could not validate layer {preferred_layer}: {e}")
                 continue
     
-    # Priority 2: Find last Conv2D layer
-    logger.info("📍 Searching for last Conv2D layer...")
-    
+    # Priority 2: Find last Conv2D layer automatically
+    logger.info("📍 Attempting auto-detection of last Conv2D layer...")
     for layer in reversed(model.layers):
-        layer_type = type(layer).__name__
-        
-        # Check for Conv2D or similar convolutional layers
-        if 'Conv2D' in layer_type or 'SeparableConv2D' in layer_type:
-            try:
-                if len(layer.output_shape) == 4:
-                    logger.info(f"✅ Found Conv2D layer: {layer.name}")
-                    logger.info(f"   Type: {layer_type}")
-                    logger.info(f"   Output shape: {layer.output_shape}")
-                    return layer.name
-            except:
-                continue
-    
-    # Priority 3: Find any 4D layer (last resort)
-    logger.info("📍 Searching for any 4D layer...")
-    
-    for layer in reversed(model.layers):
-        try:
-            if hasattr(layer, 'output_shape') and len(layer.output_shape) == 4:
-                logger.info(f"✅ Found 4D layer: {layer.name}")
-                logger.info(f"   Type: {type(layer).__name__}")
-                logger.info(f"   Output shape: {layer.output_shape}")
+        if 'Conv2D' in type(layer).__name__:
+            shape = get_layer_output_shape(layer)
+            if shape and len(shape) == 4:
+                logger.info(f"✅ Auto-detected layer: {layer.name}")
                 return layer.name
-        except:
-            continue
-    
-    # Nothing found
-    logger.error("❌ No suitable Grad-CAM layer found!")
+                
+    # Priority 3: Any 4D layer as last resort
+    logger.info("📍 Attempting auto-detection of ANY 4D layer...")
+    for layer in reversed(model.layers):
+        shape = get_layer_output_shape(layer)
+        if shape and len(shape) == 4:
+             logger.info(f"✅ Fallback 4D layer: {layer.name}")
+             return layer.name
+            
+    logger.error("❌ No suitable Grad-CAM layer found.")
     return None
 
 
 def verify_gradcam_layer(model, layer_name):
     """
     Verify that a layer is suitable for Grad-CAM.
-    
-    Args:
-        model: TensorFlow/Keras model
-        layer_name: Name of the layer to verify
-        
-    Returns:
-        bool: True if layer is valid for Grad-CAM
     """
     try:
         layer = model.get_layer(layer_name)
-        
+        shape = get_layer_output_shape(layer)
+
         # Check 1: Must have 4D output
-        if len(layer.output_shape) != 4:
-            logger.error(f"❌ Layer {layer_name} has wrong shape: {layer.output_shape}")
+        if not shape or len(shape) != 4:
+            logger.error(f"❌ Layer {layer_name} has wrong shape: {shape}")
             return False
         
         # Check 2: Must have reasonable spatial dimensions
-        _, h, w, c = layer.output_shape
-        if h is None or w is None or c is None:
-            logger.error(f"❌ Layer {layer_name} has None dimensions")
-            return False
-        
-        if h < 4 or w < 4:
-            logger.warning(f"⚠ Layer {layer_name} has very small spatial size: {h}x{w}")
+        _, h, w, c = shape
+        # Handle potential None values in shape (e.g., dynamic input sizes)
+        if h is not None and w is not None and (h < 4 or w < 4):
+             logger.warning(f"⚠ Layer {layer_name} has very small spatial size: {h}x{w}")
         
         logger.info(f"✅ Layer {layer_name} verified for Grad-CAM")
         logger.info(f"   Spatial: {h}x{w}, Channels: {c}")
@@ -625,7 +600,7 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name=None, pred_index
     try:
         # Auto-detect layer if not provided
         if last_conv_layer_name is None:
-            last_conv_layer_name = get_densenet121_gradcam_layer(model)
+            last_conv_layer_name = optimal_gradcam_layer
             
             if last_conv_layer_name is None:
                 logger.error("❌ Could not find suitable layer for Grad-CAM")
@@ -676,8 +651,8 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name=None, pred_index
         
     except Exception as e:
         logger.error(f"❌ Grad-CAM generation failed: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
+        # import traceback
+        # logger.error(traceback.format_exc())
         return None
 
 def create_gradcam_overlay(image, heatmap, alpha=0.4):
@@ -1421,3 +1396,14 @@ elif st.session_state.workflow_step == 3:
         st.rerun()
     
     st.markdown('</div>', unsafe_allow_html=True)
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style='text-align: center; color: #666; padding: 20px;'>
+    <p><strong>OCULUS PRIME - AI-Driven Ocular Disease Detection System</strong></p>
+    <p>Powered by DenseNet121 CNN + Google Gemini AI</p>
+    <p style='font-size: 0.9rem;'>⚠ This system is for research and educational purposes only. 
+    Always consult with a qualified healthcare professional for medical diagnosis and treatment.</p>
+</div>
+""", unsafe_allow_html=True)
