@@ -470,7 +470,7 @@ def format_predictions(predictions, use_optimal_thresholds=True):
     
     return results, detected
 
- ================= GRAD-CAM IMPLEMENTATION (SAFE VERSION) =================
+ #================= GRAD-CAM IMPLEMENTATION (SAFE VERSION) =================
 
 def find_last_conv_layer(model):
     """Find the last convolutional layer in the model"""
