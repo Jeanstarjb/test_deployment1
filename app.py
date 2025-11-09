@@ -1182,80 +1182,123 @@ elif st.session_state.workflow_step == 2:
         
         st.markdown("<br>", unsafe_allow_html=True)
 
+        # ===== GRAD-CAM EXPLAINABILITY SECTION =====
         st.markdown("---")
         st.markdown("## 🔬 AI Explainability: Grad-CAM Analysis")
         st.info("💡 **What is Grad-CAM?** These heatmaps show which parts of the retina influenced the AI's decision. Red/yellow areas indicate regions of high importance.")
         
-        # Check if Grad-CAMs were generated
-        has_left_gradcam = 'l_gradcams' in st.session_state and st.session_state.l_gradcams
-        has_right_gradcam = 'r_gradcams' in st.session_state and st.session_state.r_gradcams
+        # Check if Grad-CAMs exist
+        has_left = st.session_state.get('l_gradcams') and len(st.session_state.l_gradcams) > 0
+        has_right = st.session_state.get('r_gradcams') and len(st.session_state.r_gradcams) > 0
         
-        # ===== GRAD-CAM VISUALIZATIONS =====
-        if st.session_state.get('l_gradcams') or st.session_state.get('r_gradcams'):
-            st.markdown("---")
-            st.markdown("## 🔬 AI Explainability: Grad-CAM Heatmaps")
-            st.info("💡 Red/yellow areas show regions the AI focused on when making its diagnosis.")
-            
-            tab1, tab2 = st.tabs(["👁 Left Eye", "👁 Right Eye"])
+        if has_left or has_right:
+            tab1, tab2 = st.tabs(["👁 Left Eye Explainability", "👁 Right Eye Explainability"])
             
             with tab1:
-                if st.session_state.get('l_gradcams'):
-                    cols = st.columns(min(len(st.session_state.l_gradcams), 3))
+                if has_left:
+                    st.markdown("### Left Eye (OS) - Decision Heatmaps")
+                    
+                    # Original image
+                    col_orig, col_space = st.columns([1, 2])
+                    with col_orig:
+                        st.markdown("**Original Image**")
+                        st.image(st.session_state.l_img, use_column_width=True)
+                    
+                    # Grad-CAM heatmaps
+                    st.markdown("**AI Decision Heatmaps (Top Predictions)**")
+                    
+                    num_gradcams = len(st.session_state.l_gradcams)
+                    gradcam_cols = st.columns(min(num_gradcams, 3))
+                    
                     for idx, (disease, data) in enumerate(st.session_state.l_gradcams.items()):
                         if idx < 3:
-                            with cols[idx]:
-                                st.markdown(f"**{disease}** ({data['confidence']:.1%})")
+                            with gradcam_cols[idx]:
+                                st.markdown(f"**{disease}**")
+                                st.markdown(f"*Confidence: {data['confidence']:.1%}*")
                                 st.image(data['image'], use_column_width=True)
+                                
+                                # Disease-specific interpretation
+                                if disease == 'Normal':
+                                    st.success("✅ Uniform attention across retina")
+                                elif disease == 'Glaucoma':
+                                    st.warning("🎯 Focus on optic disc area")
+                                elif disease == 'Diabetes':
+                                    st.warning("🎯 Focus on microaneurysms/hemorrhages")
+                                elif disease == 'Cataract':
+                                    st.warning("🎯 Focus on lens opacity areas")
+                                elif disease == 'AMD':
+                                    st.warning("🎯 Focus on macular region")
+                                else:
+                                    st.info("🎯 Model focusing on specific pathology")
                 else:
-                    st.warning("No heatmaps available")
+                    st.warning("⚠️ Grad-CAM visualization not available for left eye")
+                    st.caption("This may occur if the model layer structure is incompatible")
             
             with tab2:
-                if st.session_state.get('r_gradcams'):
-                    cols = st.columns(min(len(st.session_state.r_gradcams), 3))
+                if has_right:
+                    st.markdown("### Right Eye (OD) - Decision Heatmaps")
+                    
+                    # Original image
+                    col_orig, col_space = st.columns([1, 2])
+                    with col_orig:
+                        st.markdown("**Original Image**")
+                        st.image(st.session_state.r_img, use_column_width=True)
+                    
+                    # Grad-CAM heatmaps
+                    st.markdown("**AI Decision Heatmaps (Top Predictions)**")
+                    
+                    num_gradcams = len(st.session_state.r_gradcams)
+                    gradcam_cols = st.columns(min(num_gradcams, 3))
+                    
                     for idx, (disease, data) in enumerate(st.session_state.r_gradcams.items()):
                         if idx < 3:
-                            with cols[idx]:
-                                st.markdown(f"**{disease}** ({data['confidence']:.1%})")
+                            with gradcam_cols[idx]:
+                                st.markdown(f"**{disease}**")
+                                st.markdown(f"*Confidence: {data['confidence']:.1%}*")
                                 st.image(data['image'], use_column_width=True)
+                                
+                                # Disease-specific interpretation
+                                if disease == 'Normal':
+                                    st.success("✅ Uniform attention across retina")
+                                elif disease == 'Glaucoma':
+                                    st.warning("🎯 Focus on optic disc area")
+                                elif disease == 'Diabetes':
+                                    st.warning("🎯 Focus on microaneurysms/hemorrhages")
+                                elif disease == 'Cataract':
+                                    st.warning("🎯 Focus on lens opacity areas")
+                                elif disease == 'AMD':
+                                    st.warning("🎯 Focus on macular region")
+                                else:
+                                    st.info("🎯 Model focusing on specific pathology")
                 else:
-                    st.warning("No heatmaps available")
+                    st.warning("⚠️ Grad-CAM visualization not available for right eye")
+                    st.caption("This may occur if the model layer structure is incompatible")
+            
+            # Color legend
+            st.markdown("---")
+            st.markdown("### 🎨 Heatmap Color Guide")
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.markdown("🔴 **Red/Yellow**")
+                st.caption("High importance - Model focused here")
+            with col2:
+                st.markdown("🟢 **Green**")
+                st.caption("Moderate importance")
+            with col3:
+                st.markdown("🔵 **Blue/Purple**")
+                st.caption("Low importance")
+            with col4:
+                st.markdown("⚫ **Black**")
+                st.caption("Not considered")
+        else:
+            st.warning("⚠️ Grad-CAM visualizations could not be generated.")
+            st.info("💡 **Possible reasons:**\n- Model architecture incompatible with Grad-CAM\n- OpenCV not properly installed\n- Convolutional layer not found")
+            st.caption("The predictions above are still valid - only the explainability heatmaps are unavailable.")
         
-        # Navigation buttons
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col1:
-            if st.button("⬅️ BACK", use_container_width=True):
-                st.session_state.workflow_step = 1
-                st.rerun()
+        st.markdown("<br>", unsafe_allow_html=True)
         
-        with col3:
-            if st.button("GENERATE REPORT ➡️", use_container_width=True, type="primary"):
-                # Generate report here if Gemini is configured
-                if st.session_state.get('gemini_api_key'):
-                    with st.spinner("🤖 Generating comprehensive clinical report with Google Gemini... This may take 30-60 seconds."):
-                        report = generate_llm_report(
-                            left_results,
-                            right_results,
-                            st.session_state.l_img,
-                            st.session_state.r_img,
-                            st.session_state.patient
-                        )
-                        
-                        if report:
-                            st.session_state.clinical_report = report
-                            st.session_state.report_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            st.success("✅ Clinical report generated!")
-                        else:
-                            st.error("❌ Failed to generate report. Please check your API key.")
-                
-                st.session_state.workflow_step = 3
-                st.rerun()
-    else:
-        st.info("🔄 Processing diagnostic data...")
-        st.session_state.workflow_step = 1
-        time.sleep(1)
-        st.rerun()
-    
-    st.markdown('</div>', unsafe_allow_html=True)
+        # Navigation buttons section continues here...
 
 # ================= STEP 3: REPORT =================
 elif st.session_state.workflow_step == 3:
