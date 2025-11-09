@@ -247,6 +247,9 @@ if not st.session_state.app_loaded:
     
     st.session_state.app_loaded = True
     st.rerun()
+
+st.write("Current Directory:", os.getcwd())
+st.write("Files in Directory:", os.listdir('.'))
 # ================= LOAD MODEL =================
 @st.cache_resource
 def load_model():
