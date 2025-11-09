@@ -467,6 +467,92 @@ def format_predictions(predictions, use_optimal_thresholds=True):
     
     return results, detected
 
+def validate_fundus_image(image):
+    """
+    Validate if uploaded image is a fundus photograph using Gemini AI
+    Returns: (is_valid: bool, confidence: str, message: str)
+    """
+    if 'gemini_api_key' not in st.session_state or not st.session_state.gemini_api_key:
+        # If no Gemini API, skip validation
+        return True, "skipped", "⚠️ Gemini API not configured - validation skipped"
+    
+    try:
+        # Configure Gemini
+        genai.configure(api_key=st.session_state.gemini_api_key)
+        model_gemini = genai.GenerativeModel('gemini-2.0-flash-exp')
+        
+        prompt = """You are an expert ophthalmologist. Analyze this image and determine if it is a RETINAL FUNDUS PHOTOGRAPH.
+
+A valid fundus photograph should show:
+- Optic disc (optic nerve head)
+- Blood vessels radiating from optic disc
+- Macula (darker area temporal to optic disc)
+- Retinal background (orange/red color)
+- Circular field of view (typical of fundus camera)
+
+RESPOND ONLY WITH A JSON OBJECT (no markdown, no code blocks, just raw JSON):
+{
+  "is_fundus": true/false,
+  "confidence": "high/medium/low",
+  "reason": "brief explanation of your assessment",
+  "visible_structures": ["list of visible retinal structures"],
+  "image_quality": "excellent/good/fair/poor",
+  "recommendation": "proceed with analysis / retake image / use different image"
+}"""
+
+        # Generate content
+        response = model_gemini.generate_content([prompt, image])
+        response_text = response.text.strip()
+        
+        # Clean response (remove markdown if present)
+        if response_text.startswith('```'):
+            lines = response_text.split('\n')
+            response_text = '\n'.join([l for l in lines if not l.startswith('```')])
+            response_text = response_text.strip()
+        
+        # Parse JSON response
+        import json
+        result = json.loads(response_text)
+        
+        is_valid = result.get('is_fundus', False)
+        confidence = result.get('confidence', 'unknown')
+        reason = result.get('reason', 'No reason provided')
+        quality = result.get('image_quality', 'unknown')
+        recommendation = result.get('recommendation', 'Review image')
+        structures = result.get('visible_structures', [])
+        
+        # Format message
+        if is_valid:
+            message = f"""✅ **Valid Fundus Image Detected**
+            
+**Confidence:** {confidence.upper()}
+**Image Quality:** {quality.capitalize()}
+**Visible Structures:** {', '.join(structures) if structures else 'Standard retinal features'}
+
+**Assessment:** {reason}
+
+✓ Proceeding with CNN analysis..."""
+        else:
+            message = f"""⚠️ **Invalid or Non-Fundus Image Detected**
+
+**Confidence:** {confidence.upper()}
+**Reason:** {reason}
+**Recommendation:** {recommendation}
+
+Please upload a proper retinal fundus photograph for accurate analysis."""
+        
+        return is_valid, confidence, message
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse Gemini response: {e}")
+        logger.error(f"Raw response: {response_text}")
+        return True, "error", "⚠️ Image validation failed (JSON parse error) - proceeding with analysis"
+        
+    except Exception as e:
+        logger.error(f"Error validating fundus image: {e}")
+        return True, "error", f"⚠️ Image validation failed ({str(e)}) - proceeding with analysis"
+
+
 def generate_llm_report(left_results, right_results, left_image, right_image, patient_info):
     """Generate comprehensive medical report using Gemini"""
     
@@ -796,6 +882,60 @@ if st.session_state.workflow_step == 1:
             if model is None:
                 st.error("❌ Model not loaded. Cannot perform analysis.")
             else:
+                # ===== PHASE 1: VALIDATE IMAGES =====
+                st.info("🔍 **Phase 1/2:** Validating fundus images with AI...")
+                
+                validation_container = st.container()
+                
+                with validation_container:
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        with st.spinner("Validating left eye image..."):
+                            l_valid, l_conf, l_msg = validate_fundus_image(st.session_state.l_img)
+                        
+                        if l_valid and l_conf != "skipped":
+                            st.success("✅ Left Eye: Valid")
+                            with st.expander("📋 View Validation Details"):
+                                st.markdown(l_msg)
+                        elif l_conf == "skipped":
+                            st.warning("⚠️ Left Eye: Validation Skipped")
+                            st.info(l_msg)
+                        else:
+                            st.error("❌ Left Eye: Invalid")
+                            st.warning(l_msg)
+                    
+                    with col2:
+                        with st.spinner("Validating right eye image..."):
+                            r_valid, r_conf, r_msg = validate_fundus_image(st.session_state.r_img)
+                        
+                        if r_valid and r_conf != "skipped":
+                            st.success("✅ Right Eye: Valid")
+                            with st.expander("📋 View Validation Details"):
+                                st.markdown(r_msg)
+                        elif r_conf == "skipped":
+                            st.warning("⚠️ Right Eye: Validation Skipped")
+                            st.info(r_msg)
+                        else:
+                            st.error("❌ Right Eye: Invalid")
+                            st.warning(r_msg)
+                
+                # Check if both images are valid
+                if (not l_valid or not r_valid) and l_conf != "skipped" and r_conf != "skipped":
+                    st.error("🚫 **Analysis Blocked:** One or more images failed validation.")
+                    st.info("💡 **Please upload proper retinal fundus photographs and try again.**")
+                    
+                    if st.button("🔄 Try Again", use_container_width=True):
+                        st.rerun()
+                    
+                    st.stop()
+                
+                # ===== PHASE 2: PROCEED WITH CNN ANALYSIS =====
+                if l_conf != "skipped" and r_conf != "skipped":
+                    st.success("✅ Both images validated successfully!")
+                
+                st.info("🧠 **Phase 2/2:** Running CNN diagnostic analysis...")
+                
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
@@ -811,6 +951,11 @@ if st.session_state.workflow_step == 1:
 
                 st.session_state.l_pred = predict_diseases(st.session_state.l_img)
                 st.session_state.r_pred = predict_diseases(st.session_state.r_img)
+                
+                # Store validation results
+                st.session_state.l_validation = {'valid': l_valid, 'confidence': l_conf, 'message': l_msg}
+                st.session_state.r_validation = {'valid': r_valid, 'confidence': r_conf, 'message': r_msg}
+                
                 st.session_state.results_ready = True
                 
                 st.success("🎉 Analysis complete!")
@@ -819,6 +964,7 @@ if st.session_state.workflow_step == 1:
                 st.rerun()
         else:
             st.error("❌ Please upload both images")
+
     
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -845,6 +991,38 @@ elif st.session_state.workflow_step == 2:
             st.session_state.r_res = right_results
             st.session_state.r_detected = right_detected
         
+        if 'l_validation' in st.session_state and 'r_validation' in st.session_state:
+            st.markdown("---")
+            st.markdown("### 🔍 Image Validation Results")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                l_val = st.session_state.l_validation
+                if l_val['confidence'] == 'skipped':
+                    st.info("⚠️ Left Eye: Validation skipped (No API key)")
+                elif l_val['valid']:
+                    st.success(f"✅ Left Eye: Validated ({l_val['confidence']} confidence)")
+                else:
+                    st.warning(f"⚠️ Left Eye: Validation concerns ({l_val['confidence']} confidence)")
+                
+                with st.expander("View Details"):
+                    st.markdown(l_val['message'])
+            
+            with col2:
+                r_val = st.session_state.r_validation
+                if r_val['confidence'] == 'skipped':
+                    st.info("⚠️ Right Eye: Validation skipped (No API key)")
+                elif r_val['valid']:
+                    st.success(f"✅ Right Eye: Validated ({r_val['confidence']} confidence)")
+                else:
+                    st.warning(f"⚠️ Right Eye: Validation concerns ({r_val['confidence']} confidence)")
+                
+                with st.expander("View Details"):
+                    st.markdown(r_val['message'])
+            
+            st.markdown("---")
+
         # Comparison summary
         st.markdown("---")
         st.markdown("### 🔄 Bilateral Comparison")
