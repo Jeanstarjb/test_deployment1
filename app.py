@@ -834,7 +834,7 @@ if st.session_state.workflow_step == 1:
         
         col_c, col_d = st.columns([1, 2])
         with col_c:
-            p_gen = st.selectbox("SEX", ["M", "F", "X"])
+            p_gen = st.selectbox("SEX", ["M", "F", "Prefer Not To Say"])
         with col_d:
             p_hist = st.text_area("HISTORY", height=80, placeholder="Medical history...")
         
