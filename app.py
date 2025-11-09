@@ -262,6 +262,7 @@ def load_model():
             include_top=False, 
             weights='imagenet', 
             input_shape=(224, 224, 3)
+            name='densenet121'
         )
         # Freeze base if that's how you trained it (optional, safer for inference)
         base_model.trainable = False 
