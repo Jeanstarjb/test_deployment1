@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 import cv2
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
+import json
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
