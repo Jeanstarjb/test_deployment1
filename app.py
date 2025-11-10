@@ -86,14 +86,14 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None
         # Return empty heatmap on error
         return np.zeros((7, 7))
 
-def create_gradcam_overlay(img, heatmap, alpha=0.4, colormap=cv2.COLORMAP_JET):
+def create_gradcam_overlay(img, heatmap, alpha=0.6, colormap=cv2.COLORMAP_JET):
     """
-    Create Grad-CAM overlay on original image
+    Create Grad-CAM overlay on original image with enhanced visibility
     
     Args:
         img: Original PIL Image
         heatmap: Grad-CAM heatmap
-        alpha: Transparency of overlay
+        alpha: Transparency of overlay (higher = more visible heatmap)
         colormap: OpenCV colormap to use
     
     Returns:
@@ -101,20 +101,28 @@ def create_gradcam_overlay(img, heatmap, alpha=0.4, colormap=cv2.COLORMAP_JET):
     """
     # Resize heatmap to match image size
     img_array = np.array(img.resize((224, 224)))
-    heatmap = cv2.resize(heatmap, (224, 224))
+    heatmap_resized = cv2.resize(heatmap, (224, 224))
+    
+    # ENHANCEMENT 1: Boost contrast - apply power transform
+    heatmap_resized = np.power(heatmap_resized, 0.7)  # Makes highlights more prominent
+    
+    # ENHANCEMENT 2: Increase minimum visibility
+    heatmap_resized = np.clip(heatmap_resized * 1.5, 0, 1)  # Amplify values
     
     # Convert heatmap to RGB
-    heatmap = np.uint8(255 * heatmap)
-    heatmap = cv2.applyColorMap(heatmap, colormap)
-    heatmap = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
+    heatmap_uint8 = np.uint8(255 * heatmap_resized)
+    heatmap_colored = cv2.applyColorMap(heatmap_uint8, colormap)
+    heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
     
-    # Superimpose heatmap on original image
-    superimposed_img = heatmap * alpha + img_array
+    # ENHANCEMENT 3: Better blending - use weighted combination
+    # Reduce original image brightness to make heatmap stand out
+    img_dimmed = img_array * 0.5  # Dim the original image
+    superimposed_img = heatmap_colored * alpha + img_dimmed * (1 - alpha)
     superimposed_img = np.clip(superimposed_img, 0, 255).astype(np.uint8)
     
     return Image.fromarray(superimposed_img)
 
-def generate_multi_class_gradcam(img, model, last_conv_layer_name, disease_names, top_n=3):
+def generate_multi_class_gradcam(img, model, last_conv_layer_name, disease_names, top_n=3, alpha=0.7, colormap=cv2.COLORMAP_JET):
     """
     Generate Grad-CAM for multiple disease classes
     
@@ -134,7 +142,7 @@ def generate_multi_class_gradcam(img, model, last_conv_layer_name, disease_names
         
         # Generate heatmap for this class
         heatmap = make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=idx)
-        overlay = create_gradcam_overlay(img, heatmap)
+        overlay = create_gradcam_overlay(img, heatmap, alpha=alpha, colormap=colormap)
         
         gradcam_results[disease] = {
             'overlay': overlay,
@@ -346,8 +354,21 @@ with st.sidebar:
     st.markdown("### 🔬 Grad-CAM Settings")
     
     show_gradcam = st.checkbox("Enable Grad-CAM Visualization", value=True)
-    gradcam_alpha = st.slider("Heatmap Opacity", 0.0, 1.0, 0.4, 0.05)
+    gradcam_alpha = st.slider("Heatmap Intensity", 0.3, 0.9, 0.7, 0.05, 
+                              help="Higher = More visible heatmap")
     gradcam_top_n = st.slider("Show Top N Classes", 1, 5, 3)
+    
+    colormap_options = {
+        "JET (Red-Blue)": cv2.COLORMAP_JET,
+        "Hot (Red-Yellow)": cv2.COLORMAP_HOT,
+        "Rainbow": cv2.COLORMAP_RAINBOW,
+        "Viridis": cv2.COLORMAP_VIRIDIS
+    }
+    selected_colormap = st.selectbox("Color Scheme", list(colormap_options.keys()))
+    colormap = colormap_options[selected_colormap]
+    
+    # Store in session state
+    st.session_state.gradcam_colormap = colormap
 
 # ================= STEP 1: UPLOAD =================
 st.markdown("## 📸 RETINAL IMAGE CAPTURE")
@@ -391,13 +412,18 @@ if st.button("🚀 RUN ANALYSIS WITH GRAD-CAM", use_container_width=True, type="
                     if last_conv_layer:
                         st.info(f"📍 Using layer: {last_conv_layer}")
                         
+                        # Get colormap from session state
+                        colormap = st.session_state.get('gradcam_colormap', cv2.COLORMAP_JET)
+                        
                         # Generate Grad-CAM for both eyes
                         st.session_state.l_gradcam = generate_multi_class_gradcam(
                             st.session_state.l_img, 
                             model, 
                             last_conv_layer, 
                             DISEASE_NAMES,
-                            top_n=gradcam_top_n
+                            top_n=gradcam_top_n,
+                            alpha=gradcam_alpha,
+                            colormap=colormap
                         )
                         
                         st.session_state.r_gradcam = generate_multi_class_gradcam(
@@ -405,7 +431,9 @@ if st.button("🚀 RUN ANALYSIS WITH GRAD-CAM", use_container_width=True, type="
                             model, 
                             last_conv_layer, 
                             DISEASE_NAMES,
-                            top_n=gradcam_top_n
+                            top_n=gradcam_top_n,
+                            alpha=gradcam_alpha,
+                            colormap=colormap
                         )
                     else:
                         st.warning("⚠️ Could not find convolutional layer for Grad-CAM")
