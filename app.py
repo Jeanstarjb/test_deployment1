@@ -628,4 +628,329 @@ if st.session_state.workflow_step == 1:
 elif st.session_state.workflow_step == 2:
     st.markdown("## 🔬 DIAGNOSTIC RESULTS WITH GRAD-CAM")
     
-if st.session_state.get('results_ready'):
+    if st.session_state.get('results_ready'):
+        if 'gradcam_layer' in st.session_state:
+            st.info(f"📍 Grad-CAM Layer: **{st.session_state.gradcam_layer}**")
+        
+        # Left Eye Results
+        st.markdown("### 👁 LEFT EYE (OS)")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### Original Image")
+            st.image(st.session_state.l_img, use_column_width=True)
+        
+        with col2:
+            st.markdown("#### CNN Predictions")
+            l_results, l_detected = format_predictions(st.session_state.l_pred)
+            
+            for r in sorted(l_results, key=lambda x: x['probability'], reverse=True)[:5]:
+                status = "🔴 DETECTED" if r['detected'] else ""
+                st.markdown(f"**{r['disease']}**: {r['probability']:.1%} {status}")
+        
+        # Grad-CAM Visualization for Left Eye
+        if show_gradcam and 'l_gradcam' in st.session_state:
+            st.markdown("#### 🔥 Grad-CAM Heatmaps (Model Focus Areas)")
+            
+            cols = st.columns(len(st.session_state.l_gradcam))
+            for idx, (disease, data) in enumerate(st.session_state.l_gradcam.items()):
+                with cols[idx]:
+                    st.markdown(f"**{disease}**")
+                    st.markdown(f"*{data['probability']:.1%}*")
+                    st.image(data['overlay'], use_column_width=True)
+                    if 'heatmap' in data:
+                        hm = data['heatmap']
+                        st.caption(f"Range: [{hm.min():.2f}, {hm.max():.2f}]")
+        
+        st.markdown("---")
+        
+        # Right Eye Results
+        st.markdown("### 👁 RIGHT EYE (OD)")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### Original Image")
+            st.image(st.session_state.r_img, use_column_width=True)
+        
+        with col2:
+            st.markdown("#### CNN Predictions")
+            r_results, r_detected = format_predictions(st.session_state.r_pred)
+            
+            for r in sorted(r_results, key=lambda x: x['probability'], reverse=True)[:5]:
+                status = "🔴 DETECTED" if r['detected'] else ""
+                st.markdown(f"**{r['disease']}**: {r['probability']:.1%} {status}")
+        
+        # Grad-CAM Visualization for Right Eye
+        if show_gradcam and 'r_gradcam' in st.session_state:
+            st.markdown("#### 🔥 Grad-CAM Heatmaps (Model Focus Areas)")
+            
+            cols = st.columns(len(st.session_state.r_gradcam))
+            for idx, (disease, data) in enumerate(st.session_state.r_gradcam.items()):
+                with cols[idx]:
+                    st.markdown(f"**{disease}**")
+                    st.markdown(f"*{data['probability']:.1%}*")
+                    st.image(data['overlay'], use_column_width=True)
+                    if 'heatmap' in data:
+                        hm = data['heatmap']
+                        st.caption(f"Range: [{hm.min():.2f}, {hm.max():.2f}]")
+        
+        # Store results for report
+        st.session_state.l_res = l_results
+        st.session_state.r_res = r_results
+        st.session_state.l_detected = l_detected
+        st.session_state.r_detected = r_detected
+        
+        # Interpretation Guide
+        st.markdown("---")
+        st.markdown("""
+        ### 🧠 INTERPRETING GRAD-CAM HEATMAPS
+        
+        **What the colors mean:**
+        - 🔴 **Red/Hot**: Areas the model focuses on most strongly
+        - 🟡 **Yellow/Warm**: Moderately important regions
+        - 🔵 **Blue/Cool**: Less relevant for this prediction
+        
+        **Clinical use:**
+        - Verify the model examines clinically relevant areas (optic disc, macula, vessels)
+        - Identify potential false positives (focusing on artifacts, edges)
+        - Build trust through transparent AI decision-making
+        
+        ⚠️ **Important**: Grad-CAM is an interpretability tool. Always validate with clinical expertise.
+        """)
+        
+        st.markdown("---")
+        
+        # Bilateral Comparison
+        st.markdown("### 🔄 BILATERAL COMPARISON")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Left Eye Conditions", len(l_detected))
+        
+        with col2:
+            st.metric("Right Eye Conditions", len(r_detected))
+        
+        with col3:
+            bilateral = set(l_detected) & set(r_detected)
+            st.metric("Bilateral Conditions", len(bilateral))
+        
+        if bilateral:
+            st.warning(f"⚠️ **Bilateral findings:** {', '.join(bilateral)}")
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Navigation buttons
+        col1, col2, col3 = st.columns([1, 2, 1])
+        
+        with col1:
+            if st.button("⬅️ BACK", use_container_width=True):
+                st.session_state.workflow_step = 1
+                st.rerun()
+        
+        with col3:
+            if st.button("GENERATE REPORT ➡️", use_container_width=True, type="primary"):
+                # Generate AI report if Gemini is available
+                if st.session_state.get('gemini_api_key'):
+                    with st.spinner("🤖 Generating clinical report with Gemini AI..."):
+                        report = generate_llm_report(
+                            l_results, r_results,
+                            st.session_state.l_img, st.session_state.r_img,
+                            st.session_state.patient
+                        )
+                        
+                        if report:
+                            st.session_state.clinical_report = report
+                            st.success("✅ Report generated!")
+                        else:
+                            st.warning("⚠️ AI report generation failed. Proceeding with CNN results only.")
+                
+                st.session_state.workflow_step = 3
+                st.rerun()
+    else:
+        st.info("🔄 No results available. Please run analysis first.")
+        if st.button("⬅️ BACK TO UPLOAD", use_container_width=True):
+            st.session_state.workflow_step = 1
+            st.rerun()
+
+# ================= STEP 3: REPORT =================
+elif st.session_state.workflow_step == 3:
+    st.markdown("## 📊 CLINICAL REPORT")
+    
+    if st.session_state.get('results_ready'):
+        # Patient Information
+        st.markdown(f"""
+        <div class='glass-card' style='margin-bottom: 30px;'>
+            <h3 style='color: var(--primary); margin-top: 0;'>👤 PATIENT INFORMATION</h3>
+            <div style='display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-top: 20px;'>
+                <div>
+                    <p style='color: #94a3b8; margin: 5px 0;'>NAME</p>
+                    <p style='font-size: 1.3rem; font-weight: bold;'>{st.session_state.patient['name']}</p>
+                </div>
+                <div>
+                    <p style='color: #94a3b8; margin: 5px 0;'>AGE</p>
+                    <p style='font-size: 1.3rem; font-weight: bold;'>{st.session_state.patient['age']} years</p>
+                </div>
+                <div>
+                    <p style='color: #94a3b8; margin: 5px 0;'>GENDER</p>
+                    <p style='font-size: 1.3rem; font-weight: bold;'>{st.session_state.patient['gender']}</p>
+                </div>
+                <div>
+                    <p style='color: #94a3b8; margin: 5px 0;'>REPORT DATE</p>
+                    <p style='font-size: 1.3rem; font-weight: bold;'>{datetime.now().strftime('%Y-%m-%d')}</p>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # CNN Predictions Summary
+        st.markdown("### 🤖 CNN MODEL PREDICTIONS")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### 👁 LEFT EYE (OS)")
+            left_detected = [r['disease'] for r in st.session_state.l_res if r['detected']]
+            if left_detected:
+                st.error(f"**Detected:** {', '.join(left_detected)}")
+            else:
+                st.success("**No abnormalities detected**")
+            
+            sorted_left = sorted(st.session_state.l_res, key=lambda x: x['probability'], reverse=True)[:3]
+            for pred in sorted_left:
+                detected_badge = "🔴" if pred['detected'] else "⚪"
+                st.markdown(f"{detected_badge} **{pred['disease']}**: {pred['probability']:.1%}")
+        
+        with col2:
+            st.markdown("#### 👁 RIGHT EYE (OD)")
+            right_detected = [r['disease'] for r in st.session_state.r_res if r['detected']]
+            if right_detected:
+                st.error(f"**Detected:** {', '.join(right_detected)}")
+            else:
+                st.success("**No abnormalities detected**")
+            
+            sorted_right = sorted(st.session_state.r_res, key=lambda x: x['probability'], reverse=True)[:3]
+            for pred in sorted_right:
+                detected_badge = "🔴" if pred['detected'] else "⚪"
+                st.markdown(f"{detected_badge} **{pred['disease']}**: {pred['probability']:.1%}")
+        
+        st.markdown("---")
+        
+        # AI Clinical Report
+        if 'clinical_report' in st.session_state:
+            st.markdown("### 🧠 AI-ENHANCED CLINICAL ANALYSIS")
+            st.markdown(st.session_state.clinical_report)
+        else:
+            st.info("💡 AI report not generated. Displaying CNN predictions only.")
+        
+        st.markdown("---")
+        
+        # Export Options
+        st.markdown("### 📥 EXPORT OPTIONS")
+        
+        # Prepare full report text
+        left_detected_str = ', '.join([r['disease'] for r in st.session_state.l_res if r['detected']]) or 'None'
+        right_detected_str = ', '.join([r['disease'] for r in st.session_state.r_res if r['detected']]) or 'None'
+        
+        full_report = f"""
+OCULUS PRIME - CLINICAL DIAGNOSTIC REPORT
+==========================================
+
+PATIENT INFORMATION
+-------------------
+Name: {st.session_state.patient['name']}
+Age: {st.session_state.patient['age']} years
+Gender: {st.session_state.patient['gender']}
+Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+CNN MODEL PREDICTIONS
+---------------------
+LEFT EYE (OS):
+  Detected: {left_detected_str}
+  
+  Detailed Predictions:
+"""
+        for r in sorted(st.session_state.l_res, key=lambda x: x['probability'], reverse=True):
+            status = "[DETECTED]" if r['detected'] else ""
+            full_report += f"    • {r['disease']:15s}: {r['probability']:6.1%} {status}\n"
+        
+        full_report += f"""
+RIGHT EYE (OD):
+  Detected: {right_detected_str}
+  
+  Detailed Predictions:
+"""
+        for r in sorted(st.session_state.r_res, key=lambda x: x['probability'], reverse=True):
+            status = "[DETECTED]" if r['detected'] else ""
+            full_report += f"    • {r['disease']:15s}: {r['probability']:6.1%} {status}\n"
+        
+        if 'clinical_report' in st.session_state:
+            full_report += f"""
+AI-ENHANCED CLINICAL ANALYSIS
+------------------------------
+{st.session_state.clinical_report}
+"""
+        
+        full_report += """
+DISCLAIMER
+----------
+This report is generated by an AI system for research and educational purposes.
+All findings should be verified by a qualified ophthalmologist.
+"""
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.download_button(
+                "💾 DOWNLOAD REPORT",
+                full_report,
+                file_name=f"OCULUS_Report_{st.session_state.patient['name'].replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.txt",
+                use_container_width=True,
+                type="primary"
+            )
+        
+        with col2:
+            if st.button("📧 EMAIL REPORT", use_container_width=True):
+                st.info("📧 Email functionality coming soon...")
+        
+        with col3:
+            if st.button("🖨 PRINT", use_container_width=True):
+                st.success("📄 Report ready for printing!")
+        
+        st.markdown("---")
+        
+        # Navigation
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("⬅️ BACK", use_container_width=True):
+                st.session_state.workflow_step = 2
+                st.rerun()
+        
+        with col2:
+            if st.button("🔄 NEW ANALYSIS", use_container_width=True):
+                for key in list(st.session_state.keys()):
+                    if key not in ['app_loaded', 'gemini_api_key']:
+                        del st.session_state[key]
+                st.session_state.workflow_step = 1
+                st.rerun()
+        
+        with col3:
+            if st.button("🏁 COMPLETE", use_container_width=True, type="primary"):
+                st.balloons()
+                st.success("✅ Analysis complete!")
+    else:
+        st.error("❌ No results available")
+        if st.button("⬅️ START OVER", use_container_width=True):
+            st.session_state.workflow_step = 1
+            st.rerun()
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style='text-align: center; color: #666; padding: 20px;'>
+    <p><strong>OCULUS PRIME + GRAD-CAM v2.0</strong></p>
+    <p>AI-Powered Retinal Disease Detection with Visual Explainability</p>
+    <p style='font-size: 0.9rem;'>⚠️ For research and educational purposes only</p>
+</div>
+""", unsafe_allow_html=True)
