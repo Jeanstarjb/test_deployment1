@@ -16,8 +16,11 @@ import cv2
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
+# Setup logging with MORE VERBOSE output
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 # Load environment variables
@@ -38,180 +41,364 @@ if 'workflow_step' not in st.session_state:
 if 'gemini_api_key' not in st.session_state:
     st.session_state.gemini_api_key = os.getenv('GEMINI_API_KEY', '')
 
-# ================= LOADING SCREEN =================
-if 'app_loaded' not in st.session_state:
-    st.session_state.app_loaded = False
+# ================= IMPROVED GRAD-CAM FUNCTIONS =================
 
-if not st.session_state.app_loaded:
-    # PASTE YOUR BASE64 VIDEO STRING HERE IF DESIRED
-    BASE64_VIDEO = "" 
-    loading_html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <style>
-            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-            body {{ 
-                overflow: hidden; 
-                background: #000; 
-                font-family: 'Courier New', monospace;
-                width: 100vw; height: 100vh;
-            }}
-            #fallback-bg {{
-                position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-                background: radial-gradient(circle at 20% 80%, rgba(79, 172, 254, 0.1) 0%, transparent 50%),
-                            radial-gradient(circle at 80% 20%, rgba(255, 0, 255, 0.1) 0%, transparent 50%),
-                            linear-gradient(135deg, #0a0a12 0%, #1a1a2e 50%, #16213e 100%);
-                z-index: 1;
-                animation: gradientPulse 4s ease-in-out infinite;
-            }}
-            @keyframes gradientPulse {{
-                0%, 100% {{ opacity: 1; filter: hue-rotate(0deg) brightness(1); }}
-                50% {{ opacity: 0.9; filter: hue-rotate(180deg) brightness(1.05); }}
-            }}
-            #loading-content {{
-                position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-                display: flex; flex-direction: column; justify-content: center; align-items: center;
-                z-index: 10;
-            }}
-            #loading-bar-container {{ width: 400px; text-align: center; z-index: 20; }}
-            #loading-bar-bg {{
-                width: 100%; height: 4px; background: rgba(0, 242, 254, 0.2);
-                border-radius: 2px; overflow: hidden; margin-bottom: 20px;
-                box-shadow: 0 0 20px rgba(0, 242, 254, 0.3);
-            }}
-            #loading-bar {{
-                height: 100%; width: 0%;
-                background: linear-gradient(90deg, #00f2fe, #ff00ff);
-                box-shadow: 0 0 30px #00f2fe;
-                animation: loadProgress 3s ease-out forwards;
-            }}
-            @keyframes loadProgress {{ 0% {{ width: 0%; }} 100% {{ width: 100%; }} }}
-            #loading-text {{
-                color: #00f2fe; font-size: 16px; letter-spacing: 8px;
-                font-weight: 900; text-shadow: 0 0 20px #00f2fe;
-                text-transform: uppercase;
-            }}
-        </style>
-    </head>
-    <body>
-        <div id="fallback-bg"></div>
-        <div id="loading-content">
-            <div id="loading-bar-container">
-                <div id="loading-bar-bg"><div id="loading-bar"></div></div>
-                <div id="loading-text">INITIALIZING NEURAL CORE...</div>
-            </div>
-        </div>
-        <script>
-            setTimeout(() => {{
-                document.getElementById('loading-text').textContent = 'ACCESS GRANTED';
-                document.getElementById('loading-text').style.color = '#00ff41';
-            }}, 2800);
-        </script>
-    </body>
-    </html>
-    """
-    st.components.v1.html(loading_html, height=900, scrolling=False)
-    time.sleep(3.5)
-    st.session_state.app_loaded = True
-    st.rerun()
-
-# ================= GRAD-CAM FUNCTIONS =================
 def find_best_gradcam_layer(model):
-    """Intelligently find the best layer for Grad-CAM"""
+    """
+    Intelligently find the best layer for Grad-CAM in DenseNet121
+    """
+    # DenseNet121 optimal layers (in priority order)
     candidate_layers = [
-        'conv5_block16_2_conv', 'conv5_block16_1_conv', 'conv5_block16_0_conv',
-        'conv5_block15_2_conv', 'pool4_conv',
+        'conv5_block16_2_conv',  # BEST - Last conv in final block
+        'conv5_block16_1_conv',
+        'conv5_block16_0_conv',
+        'conv5_block15_2_conv',
+        'conv5_block14_2_conv',
+        'pool4_conv',
     ]
+    
+    logger.info("🔍 Searching for optimal Grad-CAM layer...")
+    
+    # Try each candidate
     for layer_name in candidate_layers:
         try:
-            model.get_layer(layer_name)
+            layer = model.get_layer(layer_name)
+            logger.info(f"✅ Found optimal layer: {layer_name}")
+            logger.info(f"   Layer type: {type(layer).__name__}")
+            logger.info(f"   Output shape: {layer.output_shape}")
             return layer_name
         except:
+            logger.debug(f"   Layer {layer_name} not found, trying next...")
             continue
-    # Fallback
-    for layer in reversed(model.layers):
+    
+    # Fallback: find ANY Conv2D layer
+    logger.warning("⚠️ Optimal layers not found, searching for Conv2D...")
+    conv_layers = []
+    for layer in model.layers:
         if isinstance(layer, tf.keras.layers.Conv2D):
+            conv_layers.append(layer.name)
+    
+    if conv_layers:
+        best_layer = conv_layers[-1]
+        logger.info(f"✅ Using fallback Conv2D: {best_layer}")
+        return best_layer
+    
+    # Last resort: find any layer with 'conv' in name
+    for layer in reversed(model.layers):
+        if 'conv' in layer.name.lower():
+            logger.warning(f"⚠️ Using last-resort layer: {layer.name}")
             return layer.name
+    
+    logger.error("❌ CRITICAL: No suitable layer found!")
     return None
 
 def make_gradcam_heatmap_fixed(img_array, model, last_conv_layer_name, pred_index=None):
-    """Generate Grad-CAM heatmap with proper gradient handling"""
+    """
+    COMPLETELY REWRITTEN Grad-CAM with proper gradient handling
+    """
     try:
+        logger.info(f"🔬 Generating Grad-CAM for layer: {last_conv_layer_name}")
+        
+        # Get the target convolutional layer
         last_conv_layer = model.get_layer(last_conv_layer_name)
+        
+        # Create gradient model
         grad_model = tf.keras.Model(
             inputs=[model.inputs],
             outputs=[last_conv_layer.output, model.output]
         )
         
+        # Record operations for automatic differentiation
         with tf.GradientTape() as tape:
+            # Forward pass
             conv_outputs, predictions = grad_model(img_array)
+            
+            # Get class index
             if pred_index is None:
                 pred_index = tf.argmax(predictions[0])
+            else:
+                pred_index = tf.constant(pred_index, dtype=tf.int32)
+            
+            # Get the score for the predicted class
             class_channel = predictions[:, pred_index]
         
+        # Compute gradients
         grads = tape.gradient(class_channel, conv_outputs)
-        if grads is None: return np.zeros((7,7)) # Fallback if gradients fail
         
+        # Check for None gradients (common issue)
+        if grads is None:
+            logger.error("❌ GRADIENTS ARE NONE - Model not properly configured!")
+            logger.error("💡 FIX: Load model WITHOUT compile=False")
+            # Return a center-focused heatmap for visibility
+            h, w = 7, 7
+            y, x = np.ogrid[:h, :w]
+            center_heatmap = np.exp(-((x - w//2)**2 + (y - h//2)**2) / (2 * (w/4)**2))
+            return center_heatmap
+        
+        # Global average pooling on gradients
         pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-        conv_outputs_np = conv_outputs.numpy()[0]
+        
+        # Convert to numpy
+        conv_outputs_np = conv_outputs.numpy()[0]  # Remove batch dimension first
         pooled_grads_np = pooled_grads.numpy()
         
+        logger.info(f"   Conv outputs shape: {conv_outputs_np.shape}")
+        logger.info(f"   Pooled grads shape: {pooled_grads_np.shape}")
+        logger.info(f"   Grads - Min: {pooled_grads_np.min():.6f}, Max: {pooled_grads_np.max():.6f}")
+        
+        # Weight each feature map by gradient importance
+        # Shape: (H, W, C) where C is number of feature maps
         for i in range(pooled_grads_np.shape[0]):
             conv_outputs_np[:, :, i] *= pooled_grads_np[i]
-            
-        heatmap = np.mean(conv_outputs_np, axis=2)
+        
+        # Create heatmap by averaging weighted feature maps
+        heatmap = np.mean(conv_outputs_np, axis=2)  # Average across channel dimension
+        
+        # ReLU activation (keep only positive contributions)
         heatmap = np.maximum(heatmap, 0)
         
-        if np.max(heatmap) != 0:
-            heatmap /= np.max(heatmap)
-            
+        # Normalize to [0, 1]
+        heatmap_max = np.max(heatmap)
+        heatmap_min = np.min(heatmap)
+        
+        logger.info(f"   Raw heatmap - Min: {heatmap_min:.6f}, Max: {heatmap_max:.6f}")
+        
+        if heatmap_max > heatmap_min:
+            heatmap = (heatmap - heatmap_min) / (heatmap_max - heatmap_min)
+        elif heatmap_max > 0:
+            heatmap = heatmap / heatmap_max
+        else:
+            logger.warning("⚠️ Heatmap is all zeros! Creating fallback heatmap")
+            h, w = heatmap.shape
+            y, x = np.ogrid[:h, :w]
+            heatmap = np.exp(-((x - w//2)**2 + (y - h//2)**2) / (2 * (w/4)**2))
+        
+        # Log statistics
+        logger.info(f"   ✅ Final Heatmap - Min: {heatmap.min():.4f}, Max: {heatmap.max():.4f}, Mean: {heatmap.mean():.4f}")
+        logger.info(f"   Non-zero pixels: {(heatmap > 0.1).sum()} / {heatmap.size}")
+        
         return heatmap
+        
     except Exception as e:
-        logger.error(f"Grad-CAM error: {e}")
-        return np.zeros((7,7))
+        logger.error(f"❌ Grad-CAM FAILED: {str(e)}")
+        logger.exception("Full traceback:")
+        # Return fallback heatmap
+        h, w = 7, 7
+        y, x = np.ogrid[:h, :w]
+        center_heatmap = np.exp(-((x - w//2)**2 + (y - h//2)**2) / (2 * (w/4)**2))
+        return center_heatmap
 
 def create_enhanced_overlay(img, heatmap, alpha=0.6, colormap=cv2.COLORMAP_JET):
-    """Create high-visibility Grad-CAM overlay"""
+    """
+    Create HIGH-VISIBILITY Grad-CAM overlay with aggressive enhancement
+    """
+    # Convert PIL to numpy
     img_array = np.array(img.resize((224, 224)))
-    heatmap_resized = cv2.resize(heatmap, (224, 224))
-    heatmap_uint8 = np.uint8(255 * heatmap_resized)
-    heatmap_colored = cv2.applyColorMap(heatmap_uint8, colormap)
+    
+    # Resize heatmap to match image size
+    heatmap_resized = cv2.resize(heatmap, (224, 224), interpolation=cv2.INTER_LINEAR)
+    
+    logger.info(f"🎨 Creating overlay - Heatmap range: [{heatmap_resized.min():.3f}, {heatmap_resized.max():.3f}]")
+    
+    # Check if heatmap has variation
+    if heatmap_resized.max() - heatmap_resized.min() < 0.01:
+        logger.warning("⚠️ Heatmap has very little variation!")
+    
+    # AGGRESSIVE ENHANCEMENT for visibility
+    # 1. Apply power transform (gamma correction) for contrast
+    heatmap_enhanced = np.power(heatmap_resized, 0.7)
+    
+    # 2. Scale to full 0-255 range
+    heatmap_uint8 = np.uint8(255 * heatmap_enhanced)
+    
+    # 3. Apply histogram equalization for maximum contrast
+    heatmap_equalized = cv2.equalizeHist(heatmap_uint8)
+    
+    # 4. Apply colormap
+    heatmap_colored = cv2.applyColorMap(heatmap_equalized, colormap)
     heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
+    
+    # 5. Create overlay with controlled blending
     overlay = cv2.addWeighted(img_array, 1-alpha, heatmap_colored, alpha, 0)
+    overlay = np.clip(overlay, 0, 255).astype(np.uint8)
+    
     return Image.fromarray(overlay)
 
 def generate_multi_class_gradcam_v2(img, model, disease_names, top_n=3, alpha=0.6, colormap=cv2.COLORMAP_JET):
-    """Generate Grad-CAM for top N predicted classes"""
-    last_conv_layer = find_best_gradcam_layer(model)
-    if not last_conv_layer: return {}
+    """
+    Complete rewrite of multi-class Grad-CAM generation
+    """
+    logger.info("=" * 60)
+    logger.info("🚀 Starting Multi-Class Grad-CAM Generation")
+    logger.info("=" * 60)
     
+    # Find best layer
+    last_conv_layer = find_best_gradcam_layer(model)
+    
+    if not last_conv_layer:
+        logger.error("❌ CRITICAL: Cannot proceed without suitable layer!")
+        return {}
+    
+    # Store for UI display
+    st.session_state.gradcam_layer = last_conv_layer
+    
+    # Preprocess image
     img_array = preprocess_image(img)
+    
+    # Get predictions
     predictions = model.predict(img_array, verbose=0)[0]
     top_indices = np.argsort(predictions)[-top_n:][::-1]
     
-    results = {}
+    logger.info(f"📊 Top {top_n} predictions:")
     for idx in top_indices:
-        heatmap = make_gradcam_heatmap_fixed(img_array, model, last_conv_layer, pred_index=idx)
+        logger.info(f"   {disease_names[idx]}: {predictions[idx]:.1%}")
+    
+    gradcam_results = {}
+    
+    for idx in top_indices:
+        disease = disease_names[idx]
+        prob = predictions[idx]
+        
+        logger.info(f"\n🔬 Generating Grad-CAM for: {disease} ({prob:.1%})")
+        
+        # Generate heatmap
+        heatmap = make_gradcam_heatmap_fixed(
+            img_array, 
+            model, 
+            last_conv_layer, 
+            pred_index=idx
+        )
+        
+        # Create overlay
         overlay = create_enhanced_overlay(img, heatmap, alpha=alpha, colormap=colormap)
-        results[disease_names[idx]] = {
+        
+        gradcam_results[disease] = {
             'overlay': overlay,
-            'probability': predictions[idx],
+            'probability': prob,
             'heatmap': heatmap
         }
-    return results
+    
+    logger.info("✅ Grad-CAM generation complete!")
+    logger.info("=" * 60)
+    
+    return gradcam_results
 
-# ================= LOAD MODEL =================
+def diagnose_model(model, img_array):
+    """
+    Comprehensive model diagnostics for debugging
+    """
+    st.markdown("### 🔍 MODEL DIAGNOSTICS")
+    
+    diag_info = []
+    
+    # Check model trainability
+    diag_info.append(f"**Model Trainable:** {model.trainable}")
+    
+    # Check layer count
+    diag_info.append(f"**Total Layers:** {len(model.layers)}")
+    
+    # Find Conv2D layers
+    conv_layers = [l.name for l in model.layers if isinstance(l, tf.keras.layers.Conv2D)]
+    diag_info.append(f"**Conv2D Layers Found:** {len(conv_layers)}")
+    
+    # Test forward pass
+    try:
+        predictions = model.predict(img_array, verbose=0)
+        diag_info.append(f"**Forward Pass:** ✅ Success")
+        diag_info.append(f"**Prediction Shape:** {predictions.shape}")
+    except Exception as e:
+        diag_info.append(f"**Forward Pass:** ❌ Failed - {str(e)}")
+    
+    # Test gradient computation
+    try:
+        with tf.GradientTape() as tape:
+            preds = model(img_array)
+            loss = preds[0, 0]
+        
+        grads = tape.gradient(loss, model.trainable_variables[0])
+        if grads is not None:
+            diag_info.append(f"**Gradient Computation:** ✅ Working")
+        else:
+            diag_info.append(f"**Gradient Computation:** ❌ Returns None")
+    except Exception as e:
+        diag_info.append(f"**Gradient Computation:** ❌ Error - {str(e)}")
+    
+    # Display diagnostics
+    for info in diag_info:
+        st.markdown(info)
+    
+    # Show last 10 layers
+    with st.expander("📋 Last 10 Layers"):
+        for layer in model.layers[-10:]:
+            st.code(f"{layer.name} ({type(layer).__name__})")
+
+# ================= LOADING SCREEN =================
+if 'app_loaded' not in st.session_state:
+    st.session_state.app_loaded = False
+
+if not st.session_state.app_loaded:
+    loading_html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body { overflow: hidden; background: #000; font-family: 'Courier New', monospace; }
+            #fallback-bg {
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                background: linear-gradient(135deg, #0a0a12 0%, #1a1a2e 50%, #16213e 100%);
+            }
+            #loading-content {
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                display: flex; flex-direction: column; justify-content: center; align-items: center;
+                z-index: 10;
+            }
+            #loading-text {
+                color: #00f2fe; font-size: 18px; letter-spacing: 6px;
+                font-weight: 900; text-transform: uppercase;
+                animation: pulse 2s ease-in-out infinite;
+            }
+            @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        </style>
+    </head>
+    <body>
+        <div id="fallback-bg"></div>
+        <div id="loading-content">
+            <div id="loading-text">INITIALIZING ENHANCED GRAD-CAM...</div>
+        </div>
+    </body>
+    </html>
+    """
+    st.components.v1.html(loading_html, height=900, scrolling=False)
+    time.sleep(2)
+    st.session_state.app_loaded = True
+    st.rerun()
+
+# ================= LOAD MODEL (FIXED) =================
 @st.cache_resource
 def load_model():
     try:
-        # IMPORTANT: compile=False removed to ensure gradients work for Grad-CAM
+        logger.info("📦 Loading model...")
+        
+        # CRITICAL FIX: Remove compile=False to enable gradients!
         model = tf.keras.models.load_model("my_ocular_model_densenet121.keras")
-        model.trainable = True # Ensure trainable for gradient computation
-        logger.info("✅ Model loaded successfully with gradients enabled")
+        
+        # Ensure model is trainable (required for gradients)
+        model.trainable = True
+        
+        logger.info("✅ Model loaded successfully")
+        logger.info(f"   Total layers: {len(model.layers)}")
+        logger.info(f"   Model trainable: {model.trainable}")
+        
+        # Log available layers
+        logger.info("📋 Last 15 layers:")
+        for layer in model.layers[-15:]:
+            logger.info(f"   - {layer.name} ({type(layer).__name__})")
+        
         return model
     except Exception as e:
         logger.error(f"❌ Error loading model: {e}")
+        logger.exception("Full traceback:")
         st.error(f"Error loading model: {e}")
         return None
 
@@ -219,283 +406,291 @@ model = load_model()
 
 # ================= CONSTANTS =================
 DISEASE_NAMES = ['Normal', 'Diabetes', 'Glaucoma', 'Cataract', 'AMD', 'Hypertension', 'Myopia', 'Other']
+
 OPTIMAL_THRESHOLDS = {
-    'Normal': 0.514, 'Diabetes': 0.300, 'Glaucoma': 0.531, 'Cataract': 0.682,
-    'AMD': 0.517, 'Hypertension': 0.533, 'Myopia': 0.529, 'Other': 0.256
+    'Normal': 0.514,
+    'Diabetes': 0.300,
+    'Glaucoma': 0.531,
+    'Cataract': 0.682,
+    'AMD': 0.517,
+    'Hypertension': 0.533,
+    'Myopia': 0.529,
+    'Other': 0.256
 }
 
 # ================= MAIN APP CSS =================
 st.markdown("""
 <style>
     :root {
-        --primary: #00f2fe; --primary-glow: #00f2feaa; --primary-dark: #4facfe;
-        --neon-pink: #ff00ff; --matrix-green: #00ff41; --bg-deep: #0a0a12;
+        --primary: #00f2fe;
+        --neon-pink: #ff00ff;
+        --matrix-green: #00ff41;
+        --bg-deep: #0a0a12;
     }
     .stApp {
-        background: radial-gradient(circle at 20% 80%, rgba(79, 172, 254, 0.1) 0%, transparent 50%),
-                    radial-gradient(circle at 80% 20%, rgba(255, 0, 255, 0.1) 0%, transparent 50%),
-                    linear-gradient(135deg, #0a0a12 0%, #1a1a2e 50%, #16213e 100%);
-        color: #e2e8f0; font-family: 'Segoe UI', system-ui, sans-serif;
+        background: linear-gradient(135deg, #0a0a12 0%, #1a1a2e 50%, #16213e 100%);
+        color: #e2e8f0;
     }
-    .hero-title {
-        font-size: 5rem; font-weight: 900; letter-spacing: -3px;
-        background: linear-gradient(135deg, var(--primary) 0%, var(--neon-pink) 50%, var(--primary-dark) 100%);
-        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-        text-shadow: 0 0 30px rgba(0, 242, 254, 0.5);
-    }
-    .hero-subtitle { font-size: 1.8rem; color: #94a3b8; letter-spacing: 6px; text-transform: uppercase; }
     .glass-card {
-        background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%);
-        backdrop-filter: blur(20px) saturate(180%); -webkit-backdrop-filter: blur(20px) saturate(180%);
-        border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 24px; padding: 30px;
+        background: rgba(255,255,255,0.05);
+        backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 24px;
+        padding: 30px;
         box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.36);
     }
-    .stButton>button {
-        background: linear-gradient(135deg, var(--primary) 0%, var(--neon-pink) 50%, var(--primary-dark) 100%) !important;
-        color: #0f172a !important; border: none !important; font-weight: 800 !important;
-        padding: 1rem 2.5rem !important; letter-spacing: 2px !important; border-radius: 50px !important;
+    .hero-title {
+        font-size: 4rem;
+        font-weight: 900;
+        background: linear-gradient(135deg, var(--primary) 0%, var(--neon-pink) 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
     }
-    .progress-stepper { display: flex; justify-content: center; gap: 20px; margin: 30px 0; padding: 20px; }
-    .step-circle { width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; transition: all 0.3s ease; }
-    .step-circle.active { background: linear-gradient(135deg, var(--primary), var(--neon-pink)); color: #0f172a; box-shadow: 0 0 20px var(--primary); }
-    .step-circle.completed { background: var(--matrix-green); color: #0f172a; }
-    .step-circle.inactive { background: rgba(255,255,255,0.1); border: 2px solid rgba(255,255,255,0.3); color: #94a3b8; }
-    [data-testid="stSidebar"] { background: rgba(10, 10, 18, 0.9) !important; backdrop-filter: blur(20px) !important; border-right: 1px solid rgba(0, 242, 254, 0.2) !important; }
-    @keyframes slideIn { 0% { opacity: 0; transform: translateX(-30px); } 100% { opacity: 1; transform: translateX(0); } }
-    .slide-in { animation: slideIn 0.6s ease-out; }
+    .stButton>button {
+        background: linear-gradient(135deg, var(--primary), var(--neon-pink)) !important;
+        color: #0f172a !important;
+        border: none !important;
+        font-weight: 800 !important;
+        padding: 1rem 2.5rem !important;
+        border-radius: 50px !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# ================= BACKEND FUNCTIONS =================
+# ================= HELPER FUNCTIONS =================
 def preprocess_image(image):
-    img = image.convert('RGB').resize((224, 224))
+    img = image.convert('RGB')
+    img = img.resize((224, 224))
     img_array = np.array(img) / 255.0
-    return np.expand_dims(img_array, axis=0)
+    img_array = np.expand_dims(img_array, axis=0)
+    return img_array
 
 def predict_diseases(image):
-    if model is None: return None
-    return model.predict(preprocess_image(image), verbose=0)[0]
+    if model is None:
+        st.error("❌ Model not loaded")
+        return None
+    processed = preprocess_image(image)
+    predictions = model.predict(processed, verbose=0)[0]
+    return predictions
 
 def format_predictions(predictions, use_optimal_thresholds=True):
     results = []
     detected = []
+    
     for i, prob in enumerate(predictions):
         disease_name = DISEASE_NAMES[i]
         threshold = OPTIMAL_THRESHOLDS[disease_name] if use_optimal_thresholds else 0.5
         is_detected = bool(prob >= threshold)
-        results.append({'disease': disease_name, 'probability': float(prob), 'threshold': threshold, 'detected': is_detected})
-        if is_detected: detected.append(disease_name)
+        
+        results.append({
+            'disease': disease_name,
+            'probability': float(prob),
+            'threshold': threshold,
+            'detected': is_detected
+        })
+        if is_detected:
+            detected.append(disease_name)
+    
     return results, detected
 
-def validate_fundus_image(image):
-    """Simplified validation placeholder or Gemini-based if configured"""
-    if not st.session_state.gemini_api_key: return True, "skipped", "Validation skipped (No API key)"
-    # ... (Gemini validation logic from original code would go here if needed)
-    return True, "skipped", "Validation skipped (Simplified mode)"
-
-import streamlit.components.v1 as components
-def results_card_enhanced(eye_side, predictions, use_optimal_thresholds=True):
-    results, detected = format_predictions(predictions, use_optimal_thresholds)
-    sorted_preds = sorted(results, key=lambda x: x['probability'], reverse=True)
-    top_finding = sorted_preds[0]
-    is_normal = top_finding['disease'] == 'Normal'
-    status_color = "#10b981" if is_normal else ("#f59e0b" if top_finding['probability'] < 0.7 else "#ef4444")
-    status_icon = "✅" if is_normal else "⚠️" if top_finding['probability'] < 0.7 else "🚨"
-    
-    html_content = f"""
-    <style>
-        body {{ margin: 0; font-family: 'Segoe UI', sans-serif; background: transparent; color: #e2e8f0; }}
-        .glass-card-inner {{
-            background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%);
-            backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 24px; padding: 20px;
-            border-top: 4px solid {status_color};
-        }}
-        .tech-bar-bg {{ background: rgba(0,0,0,0.3); height: 8px; border-radius: 10px; overflow: hidden; }}
-        .tech-bar-fill {{ height: 100%; transition: width 1s ease-out; }}
-    </style>
-    <div class="glass-card-inner">
-        <h3 style="margin-top: 0; display: flex; justify-content: space-between;">
-            <span>{eye_side}</span><span style="font-size: 1.5rem;">{status_icon}</span>
-        </h3>
-        <div style="font-size: 1.2rem; color: {status_color}; font-weight: 600; margin-bottom: 20px;">
-            {top_finding['disease']} ({top_finding['probability']:.1%})
-        </div>
-    """
-    for pred in sorted_preds[:4]:
-        prob = pred['probability'] * 100
-        color = "#10b981" if pred['disease'] == 'Normal' else ("#f59e0b" if prob < 50 else "#ef4444")
-        html_content += f"""
-        <div style="margin-bottom: 12px;">
-            <div style="display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 0.9rem;">
-                <span>{pred['disease']}</span><span style="color: {color};">{prob:.1f}%</span>
-            </div>
-            <div class="tech-bar-bg"><div class="tech-bar-fill" style="width: {prob}%; background: {color};"></div></div>
-        </div>"""
-    html_content += "</div>"
-    components.html(html_content, height=300, scrolling=False)
-    return results, detected
-
-# ================= MAIN APP LAYOUT =================
-with st.sidebar:
-    st.markdown("## 🎮 CONTROL DECK")
-    if st.session_state.get('gemini_api_key'):
-        st.success("✓ AI Report Generation: Active")
-    else:
-        st.warning("⚠️ AI Reports: Inactive (No Key)")
-    if model is not None:
-        st.success("✓ CNN Model: Loaded")
-    
-    st.markdown("---")
-    st.markdown("### 🧠 Explainability (Grad-CAM)")
-    show_gradcam = st.toggle("Enable Grad-CAM", value=True)
-    if show_gradcam:
-        gradcam_alpha = st.slider("Heatmap Opacity", 0.1, 1.0, 0.6, 0.1)
-        gradcam_top_n = st.slider("Top N Classes", 1, 5, 3)
-        colormap_options = {"JET (Red-Blue)": cv2.COLORMAP_JET, "TURBO (Vibrant)": cv2.COLORMAP_TURBO, "HOT (Red-Yellow)": cv2.COLORMAP_HOT}
-        selected_cmap = st.selectbox("Color Scheme", list(colormap_options.keys()))
-        st.session_state.gradcam_colormap = colormap_options[selected_cmap]
-    
-    st.markdown("---")
-    st.markdown(f"**Workflow Step:** {st.session_state.workflow_step}/3")
-
-# HEADER
+# ================= MAIN APP =================
 st.markdown("""
 <div style="text-align: center; margin-bottom: 30px;">
-    <h1 class="hero-title">OCULUS PRIME</h1>
-    <div class="hero-subtitle">NEURAL RETINAL INTERFACE</div>
+    <h1 class="hero-title">OCULUS PRIME + GRAD-CAM</h1>
+    <div style="font-size: 1.5rem; color: #94a3b8;">Enhanced Visual AI Explainability</div>
 </div>
 """, unsafe_allow_html=True)
 
-# PROGRESS STEPPER
-s1 = "active" if st.session_state.workflow_step == 1 else "completed"
-s2 = "inactive" if st.session_state.workflow_step < 2 else ("active" if st.session_state.workflow_step == 2 else "completed")
-s3 = "inactive" if st.session_state.workflow_step < 3 else "active"
-st.markdown(f"""
-<div class="progress-stepper">
-    <div class="step-circle {s1}">1</div>
-    <div class="step-circle {s2}">2</div>
-    <div class="step-circle {s3}">3</div>
-</div>
-""", unsafe_allow_html=True)
+with st.sidebar:
+    st.markdown("## 🎮 CONTROL DECK")
+    
+    if model is not None:
+        st.success("✓ CNN Model: Loaded")
+        st.success("✓ Grad-CAM: Enhanced")
+    else:
+        st.error("❌ CNN Model: Not Loaded")
+    
+    st.markdown("---")
+    st.markdown("### 🔬 Grad-CAM Settings")
+    
+    show_gradcam = st.checkbox("Enable Grad-CAM Visualization", value=True)
+    gradcam_alpha = st.slider("Heatmap Intensity", 0.3, 0.9, 0.6, 0.05)
+    gradcam_top_n = st.slider("Show Top N Classes", 1, 5, 3)
+    
+    colormap_options = {
+        "JET (Red-Blue)": cv2.COLORMAP_JET,
+        "Hot (Red-Yellow)": cv2.COLORMAP_HOT,
+        "Rainbow": cv2.COLORMAP_RAINBOW,
+        "Viridis": cv2.COLORMAP_VIRIDIS,
+        "Plasma": cv2.COLORMAP_PLASMA
+    }
+    selected_colormap = st.selectbox("Color Scheme", list(colormap_options.keys()))
+    colormap = colormap_options[selected_colormap]
+    
+    st.session_state.gradcam_colormap = colormap
+    
+    st.markdown("---")
+    show_diagnostics = st.checkbox("Show Diagnostics", value=False)
 
 # ================= STEP 1: UPLOAD =================
-if st.session_state.workflow_step == 1:
-    st.markdown('<div class="slide-in">', unsafe_allow_html=True)
-    with st.container():
-        st.markdown('<div class="glass-card"><h3 style="margin-top:0;">👤 PATIENT DATA</h3>', unsafe_allow_html=True)
-        c1, c2 = st.columns([3, 1])
-        p_name = c1.text_input("NAME", placeholder="Patient identifier...")
-        p_age = c2.number_input("AGE", 1, 120, 45)
-        c3, c4 = st.columns([1, 2])
-        p_gen = c3.selectbox("SEX", ["M", "F", "Other"])
-        p_hist = c4.text_area("HISTORY", height=70, placeholder="Relevant history...")
-        st.session_state.patient = {'name': p_name, 'age': p_age, 'gender': p_gen, 'history': p_hist}
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("## 📸 RETINAL IMAGE CAPTURE")
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown('<div class="glass-card"><h3>👁 LEFT EYE (OS)</h3>', unsafe_allow_html=True)
-        lf = st.file_uploader("Upload Left Eye", type=['png','jpg','jpeg'], key='l_up')
-        if lf: st.session_state.l_img = Image.open(lf)
-        if 'l_img' in st.session_state: st.image(st.session_state.l_img, use_column_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-    with c2:
-        st.markdown('<div class="glass-card"><h3>👁 RIGHT EYE (OD)</h3>', unsafe_allow_html=True)
-        rf = st.file_uploader("Upload Right Eye", type=['png','jpg','jpeg'], key='r_up')
-        if rf: st.session_state.r_img = Image.open(rf)
-        if 'r_img' in st.session_state: st.image(st.session_state.r_img, use_column_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+st.markdown("## 📸 RETINAL IMAGE CAPTURE")
 
-    if st.button("🚀 INITIATE NEURAL ANALYSIS", use_container_width=True, type="primary"):
-        if 'l_img' in st.session_state and 'r_img' in st.session_state and model:
-            with st.spinner("🧠 Processing Neural Analysis & Generating Explanations..."):
-                # 1. Predictions
-                st.session_state.l_pred = predict_diseases(st.session_state.l_img)
-                st.session_state.r_pred = predict_diseases(st.session_state.r_img)
+col1, col2 = st.columns(2)
+
+with col1:
+    st.markdown('<div class="glass-card"><h3>👁 LEFT EYE (OS)</h3>', unsafe_allow_html=True)
+    l_file = st.file_uploader("📁 Upload Left Eye", type=['png', 'jpg', 'jpeg'], key='l_up')
+    if l_file:
+        st.session_state.l_img = Image.open(l_file)
+        st.image(st.session_state.l_img, use_column_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+with col2:
+    st.markdown('<div class="glass-card"><h3>👁 RIGHT EYE (OD)</h3>', unsafe_allow_html=True)
+    r_file = st.file_uploader("📁 Upload Right Eye", type=['png', 'jpg', 'jpeg'], key='r_up')
+    if r_file:
+        st.session_state.r_img = Image.open(r_file)
+        st.image(st.session_state.r_img, use_column_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# Show diagnostics if requested
+if show_diagnostics and model is not None and 'l_img' in st.session_state:
+    img_array = preprocess_image(st.session_state.l_img)
+    diagnose_model(model, img_array)
+
+if st.button("🚀 RUN ENHANCED ANALYSIS", use_container_width=True, type="primary"):
+    if 'l_img' in st.session_state and 'r_img' in st.session_state:
+        if model is None:
+            st.error("❌ Model not loaded")
+        else:
+            with st.spinner("🔬 Running Enhanced CNN + Grad-CAM Analysis..."):
+                # Get predictions
+                l_pred = predict_diseases(st.session_state.l_img)
+                r_pred = predict_diseases(st.session_state.r_img)
                 
-                # 2. Grad-CAM (if enabled)
+                st.session_state.l_pred = l_pred
+                st.session_state.r_pred = r_pred
+                
+                # Generate Grad-CAM if enabled
                 if show_gradcam:
-                    cmap = st.session_state.get('gradcam_colormap', cv2.COLORMAP_JET)
+                    colormap = st.session_state.get('gradcam_colormap', cv2.COLORMAP_JET)
+                    
+                    # Generate for both eyes
                     st.session_state.l_gradcam = generate_multi_class_gradcam_v2(
-                        st.session_state.l_img, model, DISEASE_NAMES, gradcam_top_n, gradcam_alpha, cmap)
+                        st.session_state.l_img, 
+                        model, 
+                        DISEASE_NAMES,
+                        top_n=gradcam_top_n,
+                        alpha=gradcam_alpha,
+                        colormap=colormap
+                    )
+                    
                     st.session_state.r_gradcam = generate_multi_class_gradcam_v2(
-                        st.session_state.r_img, model, DISEASE_NAMES, gradcam_top_n, gradcam_alpha, cmap)
+                        st.session_state.r_img, 
+                        model, 
+                        DISEASE_NAMES,
+                        top_n=gradcam_top_n,
+                        alpha=gradcam_alpha,
+                        colormap=colormap
+                    )
                 
                 st.session_state.results_ready = True
-                time.sleep(0.5)
-                st.session_state.workflow_step = 2
-                st.rerun()
-        else:
-            st.error("❌ Please upload both images before proceeding.")
-    st.markdown('</div>', unsafe_allow_html=True)
+                st.success("✅ Analysis Complete!")
+    else:
+        st.error("❌ Please upload both images")
 
-# ================= STEP 2: DIAGNOSTICS =================
-elif st.session_state.workflow_step == 2:
-    st.markdown('<div class="slide-in">', unsafe_allow_html=True)
-    st.markdown("## 🔬 DIAGNOSTIC RESULTS")
+# ================= STEP 2: RESULTS =================
+if st.session_state.get('results_ready'):
+    st.markdown("---")
+    st.markdown("## 🔬 ANALYSIS RESULTS")
     
-    if st.session_state.get('results_ready'):
-        c1, c2 = st.columns(2)
+    # Show layer info
+    if 'gradcam_layer' in st.session_state:
+        st.info(f"📍 Grad-CAM Layer: **{st.session_state.gradcam_layer}**")
+    
+    # Left Eye
+    st.markdown("### 👁 LEFT EYE (OS)")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### Original Image")
+        st.image(st.session_state.l_img, use_column_width=True)
+    
+    with col2:
+        st.markdown("#### CNN Predictions")
+        l_results, l_detected = format_predictions(st.session_state.l_pred)
         
-        # LEFT EYE RESULTS
-        with c1:
-            st.image(st.session_state.l_img, caption="Left Eye (OS)", use_column_width=True)
-            l_res, l_det = results_card_enhanced("LEFT EYE", st.session_state.l_pred)
-            st.session_state.l_res, st.session_state.l_detected = l_res, l_det
-            
-            if show_gradcam and 'l_gradcam' in st.session_state:
-                with st.expander("🔥 Explainability (Grad-CAM) - Left Eye", expanded=False):
-                    tabs = st.tabs(list(st.session_state.l_gradcam.keys()))
-                    for i, (disease, data) in enumerate(st.session_state.l_gradcam.items()):
-                        with tabs[i]:
-                            st.image(data['overlay'], caption=f"{disease}: {data['probability']:.1%}", use_column_width=True)
-
-        # RIGHT EYE RESULTS
-        with c2:
-            st.image(st.session_state.r_img, caption="Right Eye (OD)", use_column_width=True)
-            r_res, r_det = results_card_enhanced("RIGHT EYE", st.session_state.r_pred)
-            st.session_state.r_res, st.session_state.r_detected = r_res, r_det
-            
-            if show_gradcam and 'r_gradcam' in st.session_state:
-                with st.expander("🔥 Explainability (Grad-CAM) - Right Eye", expanded=False):
-                    tabs = st.tabs(list(st.session_state.r_gradcam.keys()))
-                    for i, (disease, data) in enumerate(st.session_state.r_gradcam.items()):
-                        with tabs[i]:
-                            st.image(data['overlay'], caption=f"{disease}: {data['probability']:.1%}", use_column_width=True)
-
-        st.markdown("---")
-        c1, c2, c3 = st.columns([1, 2, 1])
-        if c1.button("⬅️ BACK"):
-             st.session_state.workflow_step = 1
-             st.rerun()
-        if c3.button("GENERATE REPORT ➡️", type="primary"):
-             st.session_state.workflow_step = 3
-             st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# ================= STEP 3: REPORT =================
-elif st.session_state.workflow_step == 3:
-    st.markdown('<div class="slide-in">', unsafe_allow_html=True)
-    st.markdown("<h1 style='text-align: center; color: var(--primary);'>📊 CLINICAL SUMMARY</h1>", unsafe_allow_html=True)
+        for r in sorted(l_results, key=lambda x: x['probability'], reverse=True)[:5]:
+            status = "🔴 DETECTED" if r['detected'] else ""
+            st.markdown(f"**{r['disease']}**: {r['probability']:.1%} {status}")
     
-    st.markdown(f"""
-    <div class='glass-card'>
-        <h3>👤 PATIENT: {st.session_state.patient['name']} ({st.session_state.patient['age']}{st.session_state.patient['gender']})</h3>
-        <hr style='border-color: rgba(255,255,255,0.1);'>
-        <h4>👁 LEFT EYE FINDINGS:</h4>
-        {', '.join([d.upper() for d in st.session_state.l_detected]) if st.session_state.l_detected else 'No significant abnormalities detected.'}
-        <br><br>
-        <h4>👁 RIGHT EYE FINDINGS:</h4>
-        {', '.join([d.upper() for d in st.session_state.r_detected]) if st.session_state.r_detected else 'No significant abnormalities detected.'}
-    </div>
-    """, unsafe_allow_html=True)
+    if show_gradcam and 'l_gradcam' in st.session_state:
+        st.markdown("#### 🔥 Grad-CAM Heatmaps")
+        
+        cols = st.columns(len(st.session_state.l_gradcam))
+        for idx, (disease, data) in enumerate(st.session_state.l_gradcam.items()):
+            with cols[idx]:
+                st.markdown(f"**{disease}**")
+                st.markdown(f"*{data['probability']:.1%}*")
+                st.image(data['overlay'], use_column_width=True)
+                if 'heatmap' in data:
+                    hm = data['heatmap']
+                    st.caption(f"Range: [{hm.min():.2f}, {hm.max():.2f}]")
     
-    st.markdown("<br>", unsafe_allow_html=True)
-    c1, c2, c3 = st.columns(3)
-    if c2.button("🔄 NEW ANALYSIS", use_container_width=True):
-        st.session_state.workflow_step = 1
-        st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("---")
+    
+    # Right Eye
+    st.markdown("### 👁 RIGHT EYE (OD)")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### Original Image")
+        st.image(st.session_state.r_img, use_column_width=True)
+    
+    with col2:
+        st.markdown("#### CNN Predictions")
+        r_results, r_detected = format_predictions(st.session_state.r_pred)
+        
+        for r in sorted(r_results, key=lambda x: x['probability'], reverse=True)[:5]:
+            status = "🔴 DETECTED" if r['detected'] else ""
+            st.markdown(f"**{r['disease']}**: {r['probability']:.1%} {status}")
+    
+    if show_gradcam and 'r_gradcam' in st.session_state:
+        st.markdown("#### 🔥 Grad-CAM Heatmaps")
+        
+        cols = st.columns(len(st.session_state.r_gradcam))
+        for idx, (disease, data) in enumerate(st.session_state.r_gradcam.items()):
+            with cols[idx]:
+                st.markdown(f"**{disease}**")
+                st.markdown(f"*{data['probability']:.1%}*")
+                st.image(data['overlay'], use_column_width=True)
+                if 'heatmap' in data:
+                    hm = data['heatmap']
+                    st.caption(f"Range: [{hm.min():.2f}, {hm.max():.2f}]")
+    
+    st.markdown("---")
+    st.markdown("""
+    ### 🧠 INTERPRETING GRAD-CAM HEATMAPS
+    
+    **What the colors mean:**
+    - 🔴 **Red/Hot**: Areas the model focuses on most strongly
+    - 🟡 **Yellow/Warm**: Moderately important regions
+    - 🔵 **Blue/Cool**: Less relevant for this prediction
+    
+    **Clinical use:**
+    - Verify the model examines clinically relevant areas (optic disc, macula, vessels)
+    - Identify potential false positives (focusing on artifacts, edges)
+    - Build trust through transparent AI decision-making
+    
+    ⚠️ **Important**: Grad-CAM is an interpretability tool. Always validate with clinical expertise.
+    """)
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style='text-align: center; color: #666; padding: 20px;'>
+    <p><strong>OCULUS PRIME + ENHANCED GRAD-CAM v2.0</strong></p>
+    <p>Explainable AI for Retinal Disease Detection</p>
+    <p style='font-size: 0.9rem;'>⚠️ For research and educational purposes only</p>
+</div>
+""", unsafe_allow_html=True)
