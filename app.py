@@ -4,7 +4,7 @@ import numpy as np
 from PIL import Image
 import google.generativeai as genai
 import base64
-import i0
+import io
 import time
 import pandas as pd
 from datetime import datetime
