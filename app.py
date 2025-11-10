@@ -628,4 +628,4 @@ if st.session_state.workflow_step == 1:
 elif st.session_state.workflow_step == 2:
     st.markdown("## 🔬 DIAGNOSTIC RESULTS WITH GRAD-CAM")
     
-    if st.session_state.get('results_ready'):
+if st.session_state.get('results_ready'):
