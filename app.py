@@ -63,6 +63,8 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None
         last_conv_layer_output, preds = grad_model(img_array)
         if pred_index is None:
             pred_index = tf.argmax(preds[0])
+        # Convert tensor to int for indexing
+        pred_index = int(pred_index.numpy() if hasattr(pred_index, 'numpy') else pred_index)
         class_channel = preds[:, pred_index]
     
     # Gradient of output w.r.t. output feature map
