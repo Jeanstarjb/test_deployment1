@@ -52,35 +52,39 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None
     Returns:
         heatmap: Normalized heatmap array
     """
-    # Create a model that maps input to activations of last conv layer and predictions
-    grad_model = tf.keras.models.Model(
-        [model.inputs], 
-        [model.get_layer(last_conv_layer_name).output, model.output]
-    )
-    
-    # Compute gradient of top predicted class w.r.t. output feature map
-    with tf.GradientTape() as tape:
-        last_conv_layer_output, preds = grad_model(img_array)
-        if pred_index is None:
-            pred_index = tf.argmax(preds[0])
-        # Convert tensor to int for indexing
-        pred_index = int(pred_index.numpy() if hasattr(pred_index, 'numpy') else pred_index)
-        class_channel = preds[:, pred_index]
-    
-    # Gradient of output w.r.t. output feature map
-    grads = tape.gradient(class_channel, last_conv_layer_output)
-    
-    # Vector of mean intensity of gradient over specific feature map channel
-    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-    
-    # Multiply each channel by "how important this channel is"
-    last_conv_layer_output = last_conv_layer_output[0]
-    heatmap = last_conv_layer_output @ pooled_grads[..., tf.newaxis]
-    heatmap = tf.squeeze(heatmap)
-    
-    # Normalize heatmap
-    heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
-    return heatmap.numpy()
+    try:
+        # Create a model that maps input to activations of last conv layer and predictions
+        grad_model = tf.keras.models.Model(
+            [model.inputs], 
+            [model.get_layer(last_conv_layer_name).output, model.output]
+        )
+        
+        # Compute gradient of top predicted class w.r.t. output feature map
+        with tf.GradientTape() as tape:
+            last_conv_layer_output, preds = grad_model(img_array)
+            if pred_index is None:
+                pred_index = tf.argmax(preds[0])
+            # Use tf.gather for tensor-safe indexing within GradientTape
+            class_channel = tf.gather(preds[0], pred_index)
+        
+        # Gradient of output w.r.t. output feature map
+        grads = tape.gradient(class_channel, last_conv_layer_output)
+        
+        # Vector of mean intensity of gradient over specific feature map channel
+        pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+        
+        # Multiply each channel by "how important this channel is"
+        last_conv_layer_output = last_conv_layer_output[0]
+        heatmap = last_conv_layer_output @ pooled_grads[..., tf.newaxis]
+        heatmap = tf.squeeze(heatmap)
+        
+        # Normalize heatmap
+        heatmap = tf.maximum(heatmap, 0) / (tf.math.reduce_max(heatmap) + 1e-10)
+        return heatmap.numpy()
+    except Exception as e:
+        logger.error(f"Grad-CAM error: {e}")
+        # Return empty heatmap on error
+        return np.zeros((7, 7))
 
 def create_gradcam_overlay(img, heatmap, alpha=0.4, colormap=cv2.COLORMAP_JET):
     """
