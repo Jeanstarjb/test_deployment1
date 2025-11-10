@@ -116,6 +116,8 @@ def make_gradcam_heatmap_fixed(img_array, model, last_conv_layer_name, pred_inde
             # Get class index
             if pred_index is None:
                 pred_index = tf.argmax(predictions[0])
+            else:
+                pred_index = tf.constant(pred_index, dtype=tf.int32)
             
             # Get the score for the predicted class
             class_channel = predictions[:, pred_index]
@@ -127,13 +129,17 @@ def make_gradcam_heatmap_fixed(img_array, model, last_conv_layer_name, pred_inde
         if grads is None:
             logger.error("❌ GRADIENTS ARE NONE - Model not properly configured!")
             logger.error("💡 FIX: Load model WITHOUT compile=False")
-            return np.ones((7, 7)) * 0.5  # Return middle-value heatmap for visibility
+            # Return a center-focused heatmap for visibility
+            h, w = 7, 7
+            y, x = np.ogrid[:h, :w]
+            center_heatmap = np.exp(-((x - w//2)**2 + (y - h//2)**2) / (2 * (w/4)**2))
+            return center_heatmap
         
         # Global average pooling on gradients
         pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
         
         # Convert to numpy
-        conv_outputs_np = conv_outputs[0].numpy()
+        conv_outputs_np = conv_outputs.numpy()[0]  # Remove batch dimension first
         pooled_grads_np = pooled_grads.numpy()
         
         logger.info(f"   Conv outputs shape: {conv_outputs_np.shape}")
@@ -141,25 +147,34 @@ def make_gradcam_heatmap_fixed(img_array, model, last_conv_layer_name, pred_inde
         logger.info(f"   Grads - Min: {pooled_grads_np.min():.6f}, Max: {pooled_grads_np.max():.6f}")
         
         # Weight each feature map by gradient importance
-        for i in range(len(pooled_grads_np)):
+        # Shape: (H, W, C) where C is number of feature maps
+        for i in range(pooled_grads_np.shape[0]):
             conv_outputs_np[:, :, i] *= pooled_grads_np[i]
         
         # Create heatmap by averaging weighted feature maps
-        heatmap = np.mean(conv_outputs_np, axis=-1)
+        heatmap = np.mean(conv_outputs_np, axis=2)  # Average across channel dimension
         
         # ReLU activation (keep only positive contributions)
         heatmap = np.maximum(heatmap, 0)
         
         # Normalize to [0, 1]
-        heatmap_max = heatmap.max()
-        if heatmap_max > 0:
+        heatmap_max = np.max(heatmap)
+        heatmap_min = np.min(heatmap)
+        
+        logger.info(f"   Raw heatmap - Min: {heatmap_min:.6f}, Max: {heatmap_max:.6f}")
+        
+        if heatmap_max > heatmap_min:
+            heatmap = (heatmap - heatmap_min) / (heatmap_max - heatmap_min)
+        elif heatmap_max > 0:
             heatmap = heatmap / heatmap_max
         else:
-            logger.warning("⚠️ Heatmap max is zero!")
-            heatmap = np.ones_like(heatmap) * 0.5
+            logger.warning("⚠️ Heatmap is all zeros! Creating fallback heatmap")
+            h, w = heatmap.shape
+            y, x = np.ogrid[:h, :w]
+            heatmap = np.exp(-((x - w//2)**2 + (y - h//2)**2) / (2 * (w/4)**2))
         
         # Log statistics
-        logger.info(f"   ✅ Heatmap - Min: {heatmap.min():.4f}, Max: {heatmap.max():.4f}, Mean: {heatmap.mean():.4f}")
+        logger.info(f"   ✅ Final Heatmap - Min: {heatmap.min():.4f}, Max: {heatmap.max():.4f}, Mean: {heatmap.mean():.4f}")
         logger.info(f"   Non-zero pixels: {(heatmap > 0.1).sum()} / {heatmap.size}")
         
         return heatmap
@@ -167,7 +182,11 @@ def make_gradcam_heatmap_fixed(img_array, model, last_conv_layer_name, pred_inde
     except Exception as e:
         logger.error(f"❌ Grad-CAM FAILED: {str(e)}")
         logger.exception("Full traceback:")
-        return np.ones((7, 7)) * 0.5
+        # Return fallback heatmap
+        h, w = 7, 7
+        y, x = np.ogrid[:h, :w]
+        center_heatmap = np.exp(-((x - w//2)**2 + (y - h//2)**2) / (2 * (w/4)**2))
+        return center_heatmap
 
 def create_enhanced_overlay(img, heatmap, alpha=0.6, colormap=cv2.COLORMAP_JET):
     """
@@ -176,25 +195,32 @@ def create_enhanced_overlay(img, heatmap, alpha=0.6, colormap=cv2.COLORMAP_JET):
     # Convert PIL to numpy
     img_array = np.array(img.resize((224, 224)))
     
-    # Resize heatmap
-    heatmap_resized = cv2.resize(heatmap, (224, 224))
+    # Resize heatmap to match image size
+    heatmap_resized = cv2.resize(heatmap, (224, 224), interpolation=cv2.INTER_LINEAR)
     
     logger.info(f"🎨 Creating overlay - Heatmap range: [{heatmap_resized.min():.3f}, {heatmap_resized.max():.3f}]")
     
+    # Check if heatmap has variation
+    if heatmap_resized.max() - heatmap_resized.min() < 0.01:
+        logger.warning("⚠️ Heatmap has very little variation!")
+    
     # AGGRESSIVE ENHANCEMENT for visibility
-    # 1. Apply power transform (gamma correction)
-    heatmap_enhanced = np.power(heatmap_resized, 0.6)
+    # 1. Apply power transform (gamma correction) for contrast
+    heatmap_enhanced = np.power(heatmap_resized, 0.7)
     
-    # 2. Histogram equalization for better contrast
+    # 2. Scale to full 0-255 range
     heatmap_uint8 = np.uint8(255 * heatmap_enhanced)
-    heatmap_uint8 = cv2.equalizeHist(heatmap_uint8)
     
-    # 3. Apply colormap
-    heatmap_colored = cv2.applyColorMap(heatmap_uint8, colormap)
+    # 3. Apply histogram equalization for maximum contrast
+    heatmap_equalized = cv2.equalizeHist(heatmap_uint8)
+    
+    # 4. Apply colormap
+    heatmap_colored = cv2.applyColorMap(heatmap_equalized, colormap)
     heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
     
-    # 4. Create overlay with controlled blending
+    # 5. Create overlay with controlled blending
     overlay = cv2.addWeighted(img_array, 1-alpha, heatmap_colored, alpha, 0)
+    overlay = np.clip(overlay, 0, 255).astype(np.uint8)
     
     return Image.fromarray(overlay)
 
@@ -668,6 +694,3 @@ st.markdown("""
     <p style='font-size: 0.9rem;'>⚠️ For research and educational purposes only</p>
 </div>
 """, unsafe_allow_html=True)
-
-for layer in model.layers:
-    print(f"{layer.name} - {type(layer).__name__}")
