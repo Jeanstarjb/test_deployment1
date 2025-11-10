@@ -668,3 +668,6 @@ st.markdown("""
     <p style='font-size: 0.9rem;'>⚠️ For research and educational purposes only</p>
 </div>
 """, unsafe_allow_html=True)
+
+for layer in model.layers:
+    print(f"{layer.name} - {type(layer).__name__}")
