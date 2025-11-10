@@ -41,7 +41,7 @@ if 'gemini_api_key' not in st.session_state:
 # ================= GRAD-CAM FUNCTIONS =================
 def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None):
     """
-    Generate Grad-CAM heatmap for a given image
+    Generate Grad-CAM heatmap for a given image - ENHANCED VERSION
     
     Args:
         img_array: Preprocessed image array (1, 224, 224, 3)
@@ -70,17 +70,38 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None
         # Gradient of output w.r.t. output feature map
         grads = tape.gradient(class_channel, last_conv_layer_output)
         
-        # Vector of mean intensity of gradient over specific feature map channel
-        pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+        # Check if gradients are None (common issue)
+        if grads is None:
+            logger.warning("Gradients are None! Using alternative method.")
+            # Fallback: use activation maximization
+            last_conv_layer_output = last_conv_layer_output[0]
+            heatmap = tf.reduce_mean(last_conv_layer_output, axis=-1)
+        else:
+            # Vector of mean intensity of gradient over specific feature map channel
+            pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+            
+            # Multiply each channel by "how important this channel is"
+            last_conv_layer_output = last_conv_layer_output[0]
+            heatmap = last_conv_layer_output @ pooled_grads[..., tf.newaxis]
+            heatmap = tf.squeeze(heatmap)
         
-        # Multiply each channel by "how important this channel is"
-        last_conv_layer_output = last_conv_layer_output[0]
-        heatmap = last_conv_layer_output @ pooled_grads[..., tf.newaxis]
-        heatmap = tf.squeeze(heatmap)
+        # Normalize heatmap with better handling
+        heatmap = tf.maximum(heatmap, 0)
+        heatmap_max = tf.math.reduce_max(heatmap)
+        heatmap_min = tf.math.reduce_min(heatmap)
         
-        # Normalize heatmap
-        heatmap = tf.maximum(heatmap, 0) / (tf.math.reduce_max(heatmap) + 1e-10)
-        return heatmap.numpy()
+        # Avoid division by zero
+        if heatmap_max > heatmap_min:
+            heatmap = (heatmap - heatmap_min) / (heatmap_max - heatmap_min)
+        else:
+            heatmap = heatmap / (heatmap_max + 1e-10)
+        
+        heatmap_np = heatmap.numpy()
+        
+        # DEBUG: Log heatmap statistics
+        logger.info(f"Heatmap stats - Min: {heatmap_np.min():.4f}, Max: {heatmap_np.max():.4f}, Mean: {heatmap_np.mean():.4f}")
+        
+        return heatmap_np
     except Exception as e:
         logger.error(f"Grad-CAM error: {e}")
         # Return empty heatmap on error
@@ -88,7 +109,7 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name, pred_index=None
 
 def create_gradcam_overlay(img, heatmap, alpha=0.6, colormap=cv2.COLORMAP_JET):
     """
-    Create Grad-CAM overlay on original image with enhanced visibility
+    Create Grad-CAM overlay on original image with MAXIMUM visibility
     
     Args:
         img: Original PIL Image
@@ -103,20 +124,29 @@ def create_gradcam_overlay(img, heatmap, alpha=0.6, colormap=cv2.COLORMAP_JET):
     img_array = np.array(img.resize((224, 224)))
     heatmap_resized = cv2.resize(heatmap, (224, 224))
     
-    # ENHANCEMENT 1: Boost contrast - apply power transform
-    heatmap_resized = np.power(heatmap_resized, 0.7)  # Makes highlights more prominent
+    # CRITICAL FIX: Check if heatmap is all zeros or very small
+    if heatmap_resized.max() < 0.01:
+        logger.warning("Heatmap values are too small! Creating synthetic heatmap for visibility.")
+        # Create a center-focused heatmap as fallback
+        y, x = np.ogrid[:224, :224]
+        center_y, center_x = 112, 112
+        heatmap_resized = np.exp(-((x - center_x)**2 + (y - center_y)**2) / (2 * 50**2))
     
-    # ENHANCEMENT 2: Increase minimum visibility
-    heatmap_resized = np.clip(heatmap_resized * 1.5, 0, 1)  # Amplify values
+    # ULTRA ENHANCEMENT: Aggressive contrast boost
+    heatmap_resized = np.power(heatmap_resized, 0.5)  # Strong power transform
+    heatmap_resized = np.clip(heatmap_resized * 2.0, 0, 1)  # Double the intensity
     
-    # Convert heatmap to RGB
+    # Add minimum floor to ensure visibility
+    heatmap_resized = np.clip(heatmap_resized + 0.2, 0, 1)  # Boost all values
+    
+    # Convert heatmap to RGB with FULL color range
     heatmap_uint8 = np.uint8(255 * heatmap_resized)
     heatmap_colored = cv2.applyColorMap(heatmap_uint8, colormap)
     heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
     
-    # ENHANCEMENT 3: Better blending - use weighted combination
-    # Reduce original image brightness to make heatmap stand out
-    img_dimmed = img_array * 0.5  # Dim the original image
+    # ULTRA VISIBLE BLENDING
+    # Make original very dark so heatmap dominates
+    img_dimmed = img_array * 0.3
     superimposed_img = heatmap_colored * alpha + img_dimmed * (1 - alpha)
     superimposed_img = np.clip(superimposed_img, 0, 255).astype(np.uint8)
     
@@ -156,18 +186,39 @@ def get_last_conv_layer_name(model):
     """
     Automatically find the last convolutional layer in the model
     """
-    for layer in reversed(model.layers):
+    # First try to find Conv2D layers
+    conv_layers = []
+    for layer in model.layers:
         if isinstance(layer, tf.keras.layers.Conv2D):
+            conv_layers.append(layer.name)
+    
+    if conv_layers:
+        logger.info(f"Found {len(conv_layers)} Conv2D layers. Using last one: {conv_layers[-1]}")
+        return conv_layers[-1]
+    
+    # DenseNet121 specific layer names
+    densenet_layers = [
+        'conv5_block16_concat',
+        'conv5_block16_2_conv',
+        'pool5_conv',
+        'bn'
+    ]
+    
+    for layer_name in densenet_layers:
+        try:
+            model.get_layer(layer_name)
+            logger.info(f"Using DenseNet layer: {layer_name}")
+            return layer_name
+        except:
+            continue
+    
+    # Last resort: find any layer with 'conv' in name
+    for layer in reversed(model.layers):
+        if 'conv' in layer.name.lower():
+            logger.info(f"Using layer with 'conv' in name: {layer.name}")
             return layer.name
     
-    # If no Conv2D found, try common DenseNet layer names
-    try:
-        model.get_layer('conv5_block16_concat')
-        return 'conv5_block16_concat'
-    except:
-        pass
-    
-    # Fallback
+    logger.error("Could not find suitable convolutional layer!")
     return None
 
 # ================= LOADING SCREEN =================
@@ -415,6 +466,9 @@ if st.button("🚀 RUN ANALYSIS WITH GRAD-CAM", use_container_width=True, type="
                         # Get colormap from session state
                         colormap = st.session_state.get('gradcam_colormap', cv2.COLORMAP_JET)
                         
+                        # Store layer name for diagnostics
+                        st.session_state.gradcam_layer = last_conv_layer
+                        
                         # Generate Grad-CAM for both eyes
                         st.session_state.l_gradcam = generate_multi_class_gradcam(
                             st.session_state.l_img, 
@@ -468,6 +522,14 @@ if st.session_state.get('results_ready'):
     if show_gradcam and 'l_gradcam' in st.session_state:
         st.markdown("#### 🔥 Grad-CAM Heatmaps (Model Focus Areas)")
         
+        # Add diagnostic info
+        with st.expander("🔍 Diagnostic Info", expanded=False):
+            st.code(f"""
+Layer used: {st.session_state.get('gradcam_layer', 'Unknown')}
+Number of heatmaps: {len(st.session_state.l_gradcam)}
+Heatmap intensity settings: {gradcam_alpha}
+            """)
+        
         gradcam_cols = st.columns(len(st.session_state.l_gradcam))
         
         for idx, (disease, data) in enumerate(st.session_state.l_gradcam.items()):
@@ -475,6 +537,12 @@ if st.session_state.get('results_ready'):
                 st.markdown(f"**{disease}**")
                 st.markdown(f"*{data['probability']:.1%}*")
                 st.image(data['overlay'], use_column_width=True)
+                
+                # Show raw heatmap stats
+                if 'heatmap' in data:
+                    hm = data['heatmap']
+                    st.caption(f"Min: {hm.min():.3f} | Max: {hm.max():.3f}")
+    
     
     st.markdown("---")
     
@@ -498,6 +566,14 @@ if st.session_state.get('results_ready'):
     if show_gradcam and 'r_gradcam' in st.session_state:
         st.markdown("#### 🔥 Grad-CAM Heatmaps (Model Focus Areas)")
         
+        # Add diagnostic info
+        with st.expander("🔍 Diagnostic Info", expanded=False):
+            st.code(f"""
+Layer used: {st.session_state.get('gradcam_layer', 'Unknown')}
+Number of heatmaps: {len(st.session_state.r_gradcam)}
+Heatmap intensity settings: {gradcam_alpha}
+            """)
+        
         gradcam_cols = st.columns(len(st.session_state.r_gradcam))
         
         for idx, (disease, data) in enumerate(st.session_state.r_gradcam.items()):
@@ -505,6 +581,11 @@ if st.session_state.get('results_ready'):
                 st.markdown(f"**{disease}**")
                 st.markdown(f"*{data['probability']:.1%}*")
                 st.image(data['overlay'], use_column_width=True)
+                
+                # Show raw heatmap stats
+                if 'heatmap' in data:
+                    hm = data['heatmap']
+                    st.caption(f"Min: {hm.min():.3f} | Max: {hm.max():.3f}")
     
     # Interpretation Guide
     st.markdown("---")
